@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timesheet Explorer</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Timesheet Explorer</h1>
+        </header>
+
+        <!-- Tab Navigation -->
+        <div class="sticky-tabs">
+            <div class="tab-navigation">
+                <button class="tab-btn active" data-tab="mapping">Teams & People</button>
+                <button class="tab-btn" data-tab="data">Timesheet Data</button>
+                <button class="tab-btn" data-tab="reports">Reports</button>
+            </div>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="tab-content active" id="tab-mapping">
+            <!-- Import/Export Actions -->
+            <div class="import-export-section">
+                <button id="import-all-btn" class="action-btn" title="Import project-team-people data (JSON)">📤 Import</button>
+                <button id="export-all-btn" class="action-btn" title="Export project-team-people data (JSON)">📥 Export</button>
+            </div>
+
+            <!-- Three Column Layout for Projects, Teams, Roles -->
+            <div class="three-column-layout">
+                <!-- Projects Column -->
+                <section class="card column-card">
+                    <div class="column-header">
+                        <h2>Projects</h2>
+                        <button id="add-project-btn" class="btn btn-secondary btn-sm">Add</button>
+                    </div>
+                    <div class="filter-search">
+                        <input type="text" id="project-search" placeholder="Search projects..." class="input">
+                    </div>
+                    <div class="table-container">
+                        <table class="entity-table">
+                            <thead>
+                                <tr>
+                                    <th class="row-number-col">#</th>
+                                    <th>Project name</th>
+                                    <th>People</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="project-tbody">
+                                <tr class="empty-row">
+                                    <td colspan="4">No projects</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination" id="project-pagination"></div>
+                </section>
+
+                <!-- Teams Column -->
+                <section class="card column-card">
+                    <div class="column-header">
+                        <h2>Teams</h2>
+                        <button id="add-team-btn" class="btn btn-secondary btn-sm">Add</button>
+                    </div>
+                    <div class="filter-search">
+                        <input type="text" id="team-search" placeholder="Search teams..." class="input">
+                    </div>
+                    <div class="table-container">
+                        <table class="entity-table">
+                            <thead>
+                                <tr>
+                                    <th class="row-number-col">#</th>
+                                    <th>Team name</th>
+                                    <th>People</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="team-tbody">
+                                <tr class="empty-row">
+                                    <td colspan="4">No teams</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination" id="team-pagination"></div>
+                </section>
+
+                <!-- Roles Column -->
+                <section class="card column-card">
+                    <div class="column-header">
+                        <h2>Roles</h2>
+                        <button id="add-role-btn" class="btn btn-secondary btn-sm">Add</button>
+                    </div>
+                    <div class="filter-search">
+                        <input type="text" id="role-search" placeholder="Search roles..." class="input">
+                    </div>
+                    <div class="table-container">
+                        <table class="entity-table">
+                            <thead>
+                                <tr>
+                                    <th class="row-number-col">#</th>
+                                    <th>Role name</th>
+                                    <th>People</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="role-tbody">
+                                <tr class="empty-row">
+                                    <td colspan="4">No roles</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination" id="role-pagination"></div>
+                </section>
+            </div>
+
+            <!-- People Section (Full Width) -->
+            <section class="card">
+                <div class="column-header">
+                    <h2>People</h2>
+                    <div class="column-actions">
+                        <button id="add-person-btn" class="btn btn-secondary">Add</button>
+                        <button id="import-csv-people-btn" class="btn btn-secondary">From CSV</button>
+                    </div>
+                </div>
+                <div class="filter-row">
+                    <input type="text" id="person-search" placeholder="Search people..." class="input">
+                    <select id="person-team-filter" class="select select-sm">
+                        <option value="">All Teams</option>
+                    </select>
+                    <select id="person-project-filter" class="select select-sm">
+                        <option value="">All Projects</option>
+                    </select>
+                </div>                <div class="table-container">
+                    <table class="entity-table">
+                        <thead>
+                            <tr>
+                                <th class="row-number-col">#</th>
+                                <th>Name</th>
+                                <th>Team</th>
+                                <th>Project</th>
+                                <th>Role</th>
+                                <th>Total hours logged</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="person-tbody">
+                            <tr class="empty-row">
+                                <td colspan="7">No people</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination" id="person-pagination"></div>
+            </section>
+        </div>
+
+        <div class="tab-content" id="tab-data">
+            <!-- Filters Section -->
+            <section class="card">
+                <div class="filters-header">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <h2>Filters</h2>
+                        <span id="filters-badge" class="filter-badge" style="display: none;"></span>
+                    </div>
+                    <button id="toggle-advanced-filters" class="btn-text">+ Advanced Filters <span id="advanced-filters-badge" class="filter-badge" style="display: none;"></span></button>
+                </div>
+                <div class="filters-grid">
+                    <div class="filter-group">
+                        <label for="project-filter">Project</label>
+                        <select id="project-filter" class="select" multiple size="4">
+                            <option value="">All Projects</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="project-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="team-filter">Team</label>
+                        <select id="team-filter" class="select" multiple size="4">
+                            <option value="">All Teams</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="team-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="role-filter">Role</label>
+                        <select id="role-filter" class="select" multiple size="4">
+                            <option value="">All Roles</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="role-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="activity-filter">Activity Name</label>
+                        <select id="activity-filter" class="select" multiple size="4">
+                            <option value="">All Activities</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="activity-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="servis-filter">Servis</label>
+                        <select id="servis-filter" class="select" multiple size="4">
+                            <option value="">All Servis</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="servis-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="work-date-start">Work Date From</label>
+                        <input type="date" id="work-date-start" class="input">
+                    </div>
+                    <div class="filter-group">
+                        <label for="work-date-end">Work Date To</label>
+                        <input type="date" id="work-date-end" class="input">
+                    </div>
+                </div>
+                <div id="advanced-filters" class="filters-grid advanced-filters" style="display: none; margin-top: 16px;">
+                    <div class="filter-group">
+                        <label for="person-filter">Person</label>
+                        <select id="person-filter" class="select" multiple size="4">
+                            <option value="">All Persons</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="person-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="issue-status-filter">Issue Status</label>
+                        <select id="issue-status-filter" class="select" multiple size="4">
+                            <option value="">All Statuses</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="issue-status-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="project-key-filter">Project Key</label>
+                        <select id="project-key-filter" class="select" multiple size="4">
+                            <option value="">All Project Keys</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="project-key-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="issue-summary-filter">Issue Summary</label>
+                        <div class="input-with-checkbox">
+                            <input type="text" id="issue-summary-filter" class="input" placeholder="Search in issue summary...">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="issue-summary-not" class="checkbox">
+                                <span>NOT</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="filter-actions">
+                    <button id="apply-filters-btn" class="btn btn-secondary">Apply Filters</button>
+                    <button id="clear-filters-btn" class="btn btn-secondary">Clear Filters</button>
+                    <button id="manage-servis-btn" class="btn btn-secondary" style="margin-left: auto;">⚙️ Manage Servis Names</button>
+                </div>
+            </section>
+
+        <!-- Data View Section -->
+        <section class="card">
+            <div class="section-header">
+                <h2>Filtered Data</h2>
+                <div class="section-actions">
+                    <button id="import-csv-data-btn" class="action-btn" title="Import Timesheet Data (CSV)">Import</button>
+                    <button id="export-csv-btn" class="action-btn" title="Export Filtered Data (CSV)">Export</button>
+                    <button id="clear-all-data-btn" class="action-btn" style="background-color: #dc3545; color: white;" title="Clear All Timesheet Data">Clear All</button>
+                </div>
+            </div>
+            <div class="data-summary">
+                <div class="summary-item">
+                    <span class="summary-label">Total Records</span>
+                    <span id="total-records" class="summary-value">0</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">Total Hours</span>
+                    <span id="total-hours" class="summary-value">0</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">Unique People</span>
+                    <span id="unique-people" class="summary-value">0</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">Unique Issues</span>
+                    <span id="unique-issues" class="summary-value">0</span>
+                </div>
+            </div>
+            <div class="mapping-options" style="padding: 12px 0; border-top: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; margin: 12px 0; display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <button id="apply-person-mapping-btn" class="btn btn-secondary" title="Apply Person Mapping to Filtered Data">Apply Mapping</button>
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 0;">
+                        <input type="checkbox" id="override-existing-mapping" class="checkbox">
+                        <span>Override existing</span>
+                    </label>
+                </div>
+                <div id="batch-update-section" style="display: flex; flex-direction: column; gap: 8px; align-items: flex-end;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span style="font-weight: 500; font-size: 14px;">Batch Update (<span id="selected-count">0</span> selected):</span>
+                        <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 0; cursor: pointer;" title="Select all filtered records across all pages">
+                            <input type="checkbox" id="select-all-filtered" class="checkbox">
+                            <span>All <span id="total-filtered-count">0</span> filtered</span>
+                        </label>
+                        <select id="batch-field-select" class="select" style="width: auto; min-width: 120px;">
+                            <option value="">Select Field</option>
+                            <option value="team">Team</option>
+                            <option value="project">Project</option>
+                        </select>
+                        <select id="batch-value-select" class="select" style="width: auto; min-width: 150px;" disabled>
+                            <option value="">Select Value</option>
+                        </select>
+                        <button id="batch-update-btn" class="btn btn-primary" disabled>Update</button>
+                    </div>
+                </div>
+            </div>
+            <div class="table-container">
+                <table id="data-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;"><input type="checkbox" id="select-all-rows" class="checkbox"></th>
+                            <th>Work Date</th>
+                            <th>Servis</th>
+                            <th>Project Key</th>
+                            <th>Person Name</th>
+                            <th>Activity Name</th>
+                            <th>Issue Summary</th>
+                            <th>Issue Status</th>
+                            <th>Efor (hour)</th>
+                            <th>Team</th>
+                            <th>Project</th>
+                        </tr>
+                    </thead>
+                    <tbody id="data-tbody">
+                        <tr class="empty-row">
+                            <td colspan="11">No data to display. Please import a CSV file.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination" id="data-pagination"></div>
+        </section>
+        </div> <!-- Close tab-data -->
+
+        <div class="tab-content" id="tab-reports">
+            <!-- Filters Section (sync with Timesheet Data) -->
+            <section class="card compact-card">
+                <div class="filters-header">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <h2>Filters</h2>
+                        <span id="report-filters-badge" class="filter-badge" style="display: none;"></span>
+                    </div>
+                    <button id="toggle-report-advanced-filters" class="btn-text">+ Advanced Filters <span id="report-advanced-filters-badge" class="filter-badge" style="display: none;"></span></button>
+                </div>
+                <div class="filters-grid">
+                    <div class="filter-group">
+                        <label for="report-project-filter">Project</label>
+                        <select id="report-project-filter" class="select" multiple size="3">
+                            <option value="">All Projects</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="report-project-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="report-team-filter">Team</label>
+                        <select id="report-team-filter" class="select" multiple size="3">
+                            <option value="">All Teams</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="report-team-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="report-role-filter">Role</label>
+                        <select id="report-role-filter" class="select" multiple size="3">
+                            <option value="">All Roles</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="report-role-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="report-activity-filter">Activity Name</label>
+                        <select id="report-activity-filter" class="select" multiple size="3">
+                            <option value="">All Activities</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="report-activity-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="report-servis-filter">Servis</label>
+                        <select id="report-servis-filter" class="select" multiple size="3">
+                            <option value="">All Servis</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="report-servis-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="report-work-date-start">Work Date From</label>
+                        <input type="date" id="report-work-date-start" class="input">
+                    </div>
+                    <div class="filter-group">
+                        <label for="report-work-date-end">Work Date To</label>
+                        <input type="date" id="report-work-date-end" class="input">
+                    </div>
+                </div>
+                <div id="report-advanced-filters" class="filters-grid advanced-filters" style="display: none; margin-top: 16px;">
+                    <div class="filter-group">
+                        <label for="report-person-filter">Person</label>
+                        <select id="report-person-filter" class="select" multiple size="3">
+                            <option value="">All Persons</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="report-person-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="report-issue-status-filter">Issue Status</label>
+                        <select id="report-issue-status-filter" class="select" multiple size="3">
+                            <option value="">All Statuses</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="report-issue-status-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="report-project-key-filter">Project Key</label>
+                        <select id="report-project-key-filter" class="select" multiple size="3">
+                            <option value="">All Project Keys</option>
+                        </select>
+                        <label class="checkbox-label" style="margin-top: 4px;">
+                            <input type="checkbox" id="report-project-key-filter-not" class="checkbox">
+                            <span>NOT</span>
+                        </label>
+                    </div>
+                    <div class="filter-group">
+                        <label for="report-issue-summary-filter">Issue Summary</label>
+                        <div class="input-with-checkbox">
+                            <input type="text" id="report-issue-summary-filter" class="input" placeholder="Search in issue summary...">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="report-issue-summary-not" class="checkbox">
+                                <span>NOT</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="filter-actions">
+                    <button id="clear-report-filters-btn" class="btn btn-secondary">Clear Filters</button>
+                </div>
+            </section>
+
+            <!-- Report Generation Section -->
+            <section class="card compact-card">
+                <h2>Report</h2>
+            <div class="report-controls">
+                <div class="report-controls-grid">
+                    <!-- Left Column: Report Controls -->
+                    <div class="report-controls-left">
+                        <div class="report-type-selector">
+                            <label for="report-type-select">Report Type:</label>
+                            <select id="report-type-select" class="select">
+                                <option value="person">Person Name</option>
+                                <option value="team">Team</option>
+                                <option value="project">Project</option>
+                                <option value="role">Role</option>
+                                <option value="activity">Activity Name</option>
+                                <option value="servis">Servis</option>
+                                <option value="status">Issue Status</option>
+                                <option value="epic">Epic</option>
+                                <option value="projectKey">Project Key</option>
+                                <option value="issueKey">Issue Key</option>
+                            </select>
+                        </div>
+                        <div class="report-type-selector">
+                            <label for="chart-type-select">Chart Type:</label>
+                            <select id="chart-type-select" class="select">
+                                <option value="donut">Donut Chart</option>
+                                <option value="timeseries">Time Series</option>
+                            </select>
+                        </div>
+                        <div class="report-type-selector">
+                            <label for="time-granularity-select">Time Period:</label>
+                            <select id="time-granularity-select" class="select">
+                                <option value="daily">Daily</option>
+                                <option value="weekly" selected>Weekly</option>
+                                <option value="monthly">Monthly</option>
+                                <option value="quarterly">Quarterly</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Right Column: Visual Controls -->
+                    <div class="report-controls-right">
+                        <div class="visual-controls-row">
+                            <div class="rotation-control">
+                                <label for="rotation-slider" class="rotation-label">Rotation: <span id="rotation-value">-55</span>°</label>
+                                <input type="range" id="rotation-slider" class="rotation-slider" min="-180" max="180" value="-55" title="Adjust start angle">
+                            </div>
+                            
+                            <div class="control-group">
+                                <label for="theme-select">Theme:</label>
+                                <select id="theme-select" class="select"></select>
+                            </div>
+                        </div>
+                        
+                        <div class="visual-controls-row">
+                            <div class="font-size-controls">
+                                <button id="font-decrease" class="btn-icon" title="Decrease font size">A−</button>
+                                <span id="font-size-display" class="font-size-display">16</span>
+                                <button id="font-increase" class="btn-icon" title="Increase font size">A+</button>
+                            </div>
+                            
+                            <div class="control-group">
+                                <label for="font-family-select">Font:</label>
+                                <select id="font-family-select" class="select">
+                                    <option value="Helvetica">Helvetica</option>
+                                    <option value="Arial">Arial</option>
+                                    <option value="Times New Roman">Times New Roman</option>
+                                    <option value="Verdana">Verdana</option>
+                                    <option value="Georgia">Georgia</option>
+                                    <option value="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto">System Default</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top: 16px; text-align: center;">
+                    <button id="generate-report-btn" class="btn btn-secondary" style="padding: 12px 32px; font-size: 16px;">📈 Generate Chart</button>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="report-chart"></canvas>
+            </div>
+            
+            <!-- Data List Management -->
+            <div class="data-list-section">
+                <h3>Report Data Points</h3>
+                <p class="data-list-hint">Drag and drop to reorder</p>
+                <div id="report-data-list" class="report-data-list">
+                    <p style="color: #9ca3af; text-align: center; padding: 20px;">Generate a report to see data points</p>
+                </div>
+            </div>
+        </section>
+
+        </section>
+        </div> <!-- Close tab-reports -->
+    </div>
+
+    <!-- Hidden file input for CSV import -->
+    <input type="file" id="csv-file" accept=".csv" style="display: none;">
+
+    <!-- Modal for Add/Edit -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">Add/Edit</h2>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Dynamic content -->
+            </div>
+            <div class="modal-footer">
+                <button id="modal-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="modal-save" class="btn btn-secondary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Validation Modal -->
+    <div id="validation-modal" class="modal">
+        <div class="modal-content" style="max-width: 90%; max-height: 90vh;">
+            <div class="modal-header">
+                <h2>CSV Import Validation</h2>
+                <button class="modal-close" id="validation-modal-close">&times;</button>
+            </div>
+            <div class="modal-body" style="overflow-y: auto; max-height: calc(90vh - 180px);">
+                <div id="validation-summary" style="margin-bottom: 20px;">
+                    <!-- Summary will be inserted here -->
+                </div>
+                
+                <div id="validation-tabs" style="margin-bottom: 10px;">
+                    <button class="tab-btn active" data-validation-tab="skipped">Skipped Rows</button>
+                    <button class="tab-btn" data-validation-tab="valid">Valid Rows (Preview)</button>
+                </div>
+                
+                <div id="validation-tab-skipped" class="validation-tab-content active">
+                    <div style="margin-bottom: 10px;">
+                        <button id="export-skipped-btn" class="btn btn-secondary btn-sm">📥 Export Skipped Rows</button>
+                        <button id="auto-fix-btn" class="btn btn-secondary btn-sm">🔧 Auto-Fix Common Issues</button>
+                    </div>
+                    <div id="skipped-rows-container" style="overflow-x: auto;">
+                        <!-- Skipped rows table will be inserted here -->
+                    </div>
+                </div>
+                
+                <div id="validation-tab-valid" class="validation-tab-content" style="display: none;">
+                    <div id="valid-rows-preview" style="overflow-x: auto;">
+                        <!-- Valid rows preview will be inserted here -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="validation-cancel" class="btn btn-secondary">Cancel Import</button>
+                <button id="validation-proceed" class="btn btn-secondary">Proceed with Valid Rows</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Servis Management Modal -->
+    <div id="servis-modal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">
+                <h2>Manage Servis Names</h2>
+                <button class="modal-close" id="servis-modal-close">&times;</button>
+            </div>
+            <div class="modal-body" style="overflow-y: auto; max-height: 60vh;">
+                <p style="margin-bottom: 15px; color: #666;">Define display names for Servis numbers. Format: "Number - Name"</p>
+                <div style="margin-bottom: 15px;">
+                    <button id="add-servis-mapping-btn" class="btn btn-secondary btn-sm">+ Add New Mapping</button>
+                </div>
+                <div class="table-container">
+                    <table class="entity-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 150px;">Servis Number</th>
+                                <th>Display Name</th>
+                                <th style="width: 100px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="servis-mapping-tbody">
+                            <tr class="empty-row">
+                                <td colspan="3">No Servis mappings defined</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="servis-modal-close-btn" class="btn btn-secondary">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

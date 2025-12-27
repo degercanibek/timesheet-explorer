@@ -11,6 +11,8 @@ let state = {
     projects: [],
     teams: [],
     roles: [],
+    workTypes: [], // Available work types (e.g., "Analysis", "Development")
+    roleWorkType: {}, // {roleName: "defaultWorkType"}
     people: {}, // {personName: {team, project, role}}
     servisMapping: {}, // {servisNumber: "Description"} e.g., {"5215": "General Efforts"}
     timesheetData: [], // Array of CSV row objects
@@ -30,6 +32,7 @@ let state = {
     currentTab: 'mapping',
     currentReportType: 'person',
     currentChartType: 'donut',
+    currentUnit: 'hours', // 'hours' or 'mandays'
     
     // Report data (for reordering)
     reportData: [], // Array of {label, value} for current report
@@ -43,6 +46,7 @@ let state = {
         projects: { currentPage: 1, itemsPerPage: 10 },
         teams: { currentPage: 1, itemsPerPage: 10 },
         roles: { currentPage: 1, itemsPerPage: 10 },
+        workTypes: { currentPage: 1, itemsPerPage: 10 },
         people: { currentPage: 1, itemsPerPage: 20 },
         filteredData: { currentPage: 1, itemsPerPage: 20 }
     },
@@ -52,6 +56,7 @@ let state = {
         projects: '',
         teams: '',
         roles: '',
+        workTypes: '',
         people: ''
     },
     
@@ -79,16 +84,116 @@ const chartThemes = {
 // INITIALIZATION
 // ============================================
 
-document.addEventListener('DOMContentLoaded', () => {
+// Load and render USER_GUIDE.md
+async function loadUserGuide() {
+    const contentContainer = document.getElementById('guide-content-container');
+    
+    // Check if marked is loaded
+    if (typeof marked === 'undefined') {
+        console.error('marked.js library not loaded');
+        if (contentContainer) {
+            contentContainer.innerHTML = '<div style="padding: 40px; text-align: center; color: #ef4444;"><h2>⚠️ Could not load User Guide</h2><p>marked.js library not loaded</p></div>';
+        }
+        return;
+    }
+    
+    // Use embedded content from HTML
+    const embeddedGuide = document.getElementById('embedded-user-guide');
+    
+    if (embeddedGuide && embeddedGuide.textContent) {
+        const markdown = embeddedGuide.textContent;
+        const html = marked.parse(markdown);
+        
+        if (contentContainer) {
+            contentContainer.innerHTML = html;
+            generateTableOfContents();
+            setupScrollSpy();
+        }
+    } else {
+        console.error('Embedded guide content not found');
+        if (contentContainer) {
+            contentContainer.innerHTML = '<div style="padding: 40px; text-align: center; color: #ef4444;"><h2>⚠️ Could not load User Guide</h2></div>';
+        }
+    }
+}
+
+// Generate Table of Contents from markdown headings
+function generateTableOfContents() {
+    const contentContainer = document.getElementById('guide-content-container');
+    const tocList = document.getElementById('guide-toc-list');
+    
+    if (!contentContainer || !tocList) return;
+    
+    // Find all h2 headings
+    const headings = contentContainer.querySelectorAll('h2');
+    
+    // Clear existing ToC
+    tocList.innerHTML = '';
+    
+    headings.forEach(heading => {
+        // Create an ID if it doesn't exist
+        if (!heading.id) {
+            heading.id = heading.textContent
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-|-$/g, '');
+        }
+        
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.href = `#${heading.id}`;
+        a.textContent = heading.textContent;
+        li.appendChild(a);
+        tocList.appendChild(li);
+    });
+}
+
+// Setup scroll spy for ToC highlighting
+function setupScrollSpy() {
+    const contentContainer = document.getElementById('guide-content-container');
+    const tocLinks = document.querySelectorAll('.guide-toc a');
+    
+    if (!contentContainer || !tocLinks.length) return;
+    
+    const headings = contentContainer.querySelectorAll('h2');
+    
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                // Remove active class from all links
+                tocLinks.forEach(link => link.classList.remove('active'));
+                
+                // Add active class to corresponding ToC link
+                const activeLink = document.querySelector(`.guide-toc a[href="#${entry.target.id}"]`);
+                if (activeLink) {
+                    activeLink.classList.add('active');
+                }
+            }
+        });
+    }, {
+        root: null,
+        rootMargin: '-100px 0px -66%',
+        threshold: 0
+    });
+    
+    headings.forEach(heading => {
+        observer.observe(heading);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
     console.log('Initializing Timesheet Explorer...');
     
-    // Load data from localStorage or JSON file
-    loadInitialData();
+    // Load user guide from USER_GUIDE.md
+    loadUserGuide();
+    
+    // Load data from localStorage or JSON file (await to ensure data is loaded)
+    await loadInitialData();
     
     // Setup all event listeners
     setupEventListeners();
     
-    // Initialize UI
+    // Initialize UI (now that data is loaded)
     initializeUI();
     
     console.log('Timesheet Explorer initialized successfully');
@@ -129,6 +234,8 @@ async function saveToIndexedDB() {
             projects: state.projects,
             teams: state.teams,
             roles: state.roles,
+            workTypes: state.workTypes,
+            roleWorkType: state.roleWorkType,
             people: state.people,
             servisMapping: state.servisMapping,
             timesheetData: state.timesheetData
@@ -174,6 +281,8 @@ async function loadInitialData() {
             state.projects = savedData.projects || [];
             state.teams = savedData.teams || [];
             state.roles = savedData.roles || [];
+            state.workTypes = savedData.workTypes || [];
+            state.roleWorkType = savedData.roleWorkType || {};
             state.people = savedData.people || {};
             state.servisMapping = savedData.servisMapping || {};
             state.timesheetData = savedData.timesheetData || [];
@@ -228,6 +337,88 @@ async function saveToLocalStorage() {
 }
 
 // ============================================
+// SUB-TAB SWITCHING
+// ============================================
+function switchSubTab(subtab) {
+    // Hide all sub-tab contents
+    document.querySelectorAll('.sub-tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    
+    // Remove active class from all sub-tab buttons
+    document.querySelectorAll('.sub-tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Show selected sub-tab content
+    const selectedContent = document.getElementById(`subtab-${subtab}`);
+    if (selectedContent) {
+        selectedContent.classList.add('active');
+    }
+    
+    // Activate selected button
+    const selectedBtn = document.querySelector(`.sub-tab-btn[data-subtab="${subtab}"]`);
+    if (selectedBtn) {
+        selectedBtn.classList.add('active');
+    }
+}
+
+// ============================================
+// UTILITY FUNCTIONS - FORMATTING
+// ============================================
+
+// Format number with thousand separator
+function formatNumber(num) {
+    if (num === null || num === undefined || isNaN(num)) return '0';
+    return Number(num).toLocaleString('en-US', { 
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 1 
+    });
+}
+
+// Convert hours to selected unit (hours or man-days)
+function convertValue(hours) {
+    if (state.currentUnit === 'mandays') {
+        return hours / 8;
+    }
+    return hours;
+}
+
+// Format value with unit
+function formatValueWithUnit(hours) {
+    const value = convertValue(hours);
+    const formatted = formatNumber(value);
+    return formatted;
+}
+
+// Get current unit label
+function getUnitLabel() {
+    return state.currentUnit === 'mandays' ? 'Man-days' : 'Hours';
+}
+
+// Get unit abbreviation for charts
+function getUnitAbbreviation() {
+    return state.currentUnit === 'mandays' ? 'md' : 'h';
+}
+
+// Update table headers based on unit
+function updateTableHeaders() {
+    const peopleHeader = document.getElementById('people-hours-header');
+    const filteredDataHeader = document.getElementById('filtered-data-hours-header');
+    const totalHoursLabel = document.getElementById('total-hours-label');
+    
+    if (peopleHeader) {
+        peopleHeader.textContent = `Total ${getUnitLabel().toLowerCase()} logged`;
+    }
+    if (filteredDataHeader) {
+        filteredDataHeader.textContent = state.currentUnit === 'mandays' ? 'Efor (man-day)' : 'Efor (hour)';
+    }
+    if (totalHoursLabel) {
+        totalHoursLabel.textContent = `Total ${getUnitLabel()}`;
+    }
+}
+
+// ============================================
 // EVENT LISTENERS SETUP
 // ============================================
 
@@ -235,6 +426,31 @@ function setupEventListeners() {
     // Tab navigation
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+    
+    // Sub-tab navigation
+    document.querySelectorAll('.sub-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchSubTab(btn.dataset.subtab));
+    });
+    
+    // Help icon navigation
+    document.querySelectorAll('.section-help-icon').forEach(icon => {
+        icon.addEventListener('click', (e) => {
+            const helpSection = icon.dataset.help;
+            handleHelpIconClick(e, helpSection);
+        });
+    });
+    
+    // Unit toggle (Hours/Man-days) - Switch
+    document.getElementById('unit-toggle').addEventListener('change', (e) => {
+        state.currentUnit = e.target.checked ? 'mandays' : 'hours';
+        updateTableHeaders();
+        // Refresh all displays
+        renderPeople();
+        applyFilters();
+        if (state.chart) {
+            generateReport();
+        }
     });
     
     // Import/Export buttons (Teams & People tab)
@@ -245,6 +461,7 @@ function setupEventListeners() {
     document.getElementById('add-project-btn').addEventListener('click', () => openModal('project'));
     document.getElementById('add-team-btn').addEventListener('click', () => openModal('team'));
     document.getElementById('add-role-btn').addEventListener('click', () => openModal('role'));
+    document.getElementById('add-work-type-btn').addEventListener('click', () => openModal('workType'));
     document.getElementById('add-person-btn').addEventListener('click', () => openModal('person'));
     document.getElementById('import-csv-people-btn').addEventListener('click', importPeopleFromCSV);
     
@@ -261,6 +478,10 @@ function setupEventListeners() {
         state.search.roles = e.target.value;
         renderRoles();
     });
+    document.getElementById('work-type-search').addEventListener('input', (e) => {
+        state.search.workTypes = e.target.value;
+        renderWorkTypes();
+    });
     document.getElementById('person-search').addEventListener('input', (e) => {
         state.search.people = e.target.value;
         renderPeople();
@@ -269,6 +490,7 @@ function setupEventListeners() {
     // People filters
     document.getElementById('person-team-filter').addEventListener('change', renderPeople);
     document.getElementById('person-project-filter').addEventListener('change', renderPeople);
+    document.getElementById('person-role-filter').addEventListener('change', renderPeople);
     
     // Timesheet Data tab
     document.getElementById('import-csv-data-btn').addEventListener('click', importTimesheetCSV);
@@ -292,21 +514,149 @@ function setupEventListeners() {
     document.getElementById('toggle-report-advanced-filters').addEventListener('click', toggleReportAdvancedFilters);
     
     // Track filter changes for badges
-    const dataFilterIds = ['project-filter', 'team-filter', 'role-filter', 'activity-filter', 'servis-filter', 'person-filter', 'issue-status-filter', 'project-key-filter'];
+    const dataFilterIds = ['project-filter', 'team-filter', 'role-filter', 'work-type-filter', 'activity-filter', 'servis-filter', 'person-filter', 'issue-status-filter', 'project-key-filter'];
     dataFilterIds.forEach(id => {
         document.getElementById(id)?.addEventListener('change', updateFilterBadges);
+        
+        // Add individual clear button listener
+        const clearBtn = document.getElementById(`clear-${id}`);
+        if (clearBtn) {
+            clearBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const select = document.getElementById(id);
+                if (select) {
+                    Array.from(select.options).forEach(option => {
+                        option.selected = option.value === '';
+                    });
+                    // Also clear the NOT checkbox for this filter
+                    const notCheckbox = document.getElementById(`${id}-not`);
+                    if (notCheckbox) {
+                        notCheckbox.checked = false;
+                    }
+                    updateFilterBadges();
+                }
+            });
+        }
     });
+    
+    // Issue summary clear button
+    const clearIssueSummary = document.getElementById('clear-issue-summary-filter');
+    if (clearIssueSummary) {
+        clearIssueSummary.addEventListener('click', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('issue-summary-filter');
+            if (input) {
+                input.value = '';
+                // Also clear the NOT checkbox
+                const notCheckbox = document.getElementById('issue-summary-not');
+                if (notCheckbox) {
+                    notCheckbox.checked = false;
+                }
+                updateFilterBadges();
+            }
+        });
+    }
+    
     document.getElementById('issue-summary-filter')?.addEventListener('input', updateFilterBadges);
     document.getElementById('work-date-start')?.addEventListener('change', updateFilterBadges);
     document.getElementById('work-date-end')?.addEventListener('change', updateFilterBadges);
     
-    const reportFilterIds = ['report-project-filter', 'report-team-filter', 'report-role-filter', 'report-activity-filter', 'report-servis-filter', 'report-person-filter', 'report-issue-status-filter', 'report-project-key-filter'];
+    // Clear buttons for date filters
+    const clearWorkDateStart = document.getElementById('clear-work-date-start');
+    if (clearWorkDateStart) {
+        clearWorkDateStart.addEventListener('click', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('work-date-start');
+            if (input) {
+                input.value = '';
+                updateFilterBadges();
+            }
+        });
+    }
+    
+    const clearWorkDateEnd = document.getElementById('clear-work-date-end');
+    if (clearWorkDateEnd) {
+        clearWorkDateEnd.addEventListener('click', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('work-date-end');
+            if (input) {
+                input.value = '';
+                updateFilterBadges();
+            }
+        });
+    }
+    
+    const reportFilterIds = ['report-project-filter', 'report-team-filter', 'report-role-filter', 'report-work-type-filter', 'report-activity-filter', 'report-servis-filter', 'report-person-filter', 'report-issue-status-filter', 'report-project-key-filter'];
     reportFilterIds.forEach(id => {
         document.getElementById(id)?.addEventListener('change', updateReportFilterBadges);
+        
+        // Add individual clear button listener for report filters
+        const clearBtn = document.getElementById(`clear-${id}`);
+        if (clearBtn) {
+            clearBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const select = document.getElementById(id);
+                if (select) {
+                    Array.from(select.options).forEach(option => {
+                        option.selected = option.value === '';
+                    });
+                    // Also clear the NOT checkbox for this filter
+                    const notCheckbox = document.getElementById(`${id}-not`);
+                    if (notCheckbox) {
+                        notCheckbox.checked = false;
+                    }
+                    updateReportFilterBadges();
+                }
+            });
+        }
     });
+    
+    // Report issue summary clear button
+    const clearReportIssueSummary = document.getElementById('clear-report-issue-summary-filter');
+    if (clearReportIssueSummary) {
+        clearReportIssueSummary.addEventListener('click', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('report-issue-summary-filter');
+            if (input) {
+                input.value = '';
+                // Also clear the NOT checkbox
+                const notCheckbox = document.getElementById('report-issue-summary-not');
+                if (notCheckbox) {
+                    notCheckbox.checked = false;
+                }
+                updateReportFilterBadges();
+            }
+        });
+    }
+    
     document.getElementById('report-issue-summary-filter')?.addEventListener('input', updateReportFilterBadges);
     document.getElementById('report-work-date-start')?.addEventListener('change', updateReportFilterBadges);
     document.getElementById('report-work-date-end')?.addEventListener('change', updateReportFilterBadges);
+    
+    // Clear buttons for report date filters
+    const clearReportWorkDateStart = document.getElementById('clear-report-work-date-start');
+    if (clearReportWorkDateStart) {
+        clearReportWorkDateStart.addEventListener('click', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('report-work-date-start');
+            if (input) {
+                input.value = '';
+                updateReportFilterBadges();
+            }
+        });
+    }
+    
+    const clearReportWorkDateEnd = document.getElementById('clear-report-work-date-end');
+    if (clearReportWorkDateEnd) {
+        clearReportWorkDateEnd.addEventListener('click', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('report-work-date-end');
+            if (input) {
+                input.value = '';
+                updateReportFilterBadges();
+            }
+        });
+    }
     
     // Reports tab
     document.getElementById('report-type-select').addEventListener('change', (e) => {
@@ -318,9 +668,9 @@ function setupEventListeners() {
     });
     document.getElementById('chart-type-select').addEventListener('change', (e) => {
         state.currentChartType = e.target.value;
-        // Re-render chart if data exists
+        // Re-generate report if data exists (needed for timeseries data)
         if (state.reportData.length > 0) {
-            renderChart();
+            generateReport();
         }
     });
     document.getElementById('time-granularity-select')?.addEventListener('change', () => {
@@ -409,8 +759,74 @@ function switchTab(tabName) {
         populateDataFilters();
         applyFilters();
     } else if (tabName === 'reports') {
-        syncReportFilters();
+        // Reports tab uses independent filters - no sync needed
+    } else if (tabName === 'help') {
+        // Scroll to top when opening help tab
+        setTimeout(() => {
+            const helpContent = document.querySelector('#tab-help');
+            if (helpContent) helpContent.scrollTop = 0;
+            setupGuideScrollTracking();
+        }, 50);
     }
+}
+
+// Setup guide scroll tracking for ToC
+function setupGuideScrollTracking() {
+    const guideContent = document.querySelector('.guide-content');
+    const tocLinks = document.querySelectorAll('.guide-toc a');
+    
+    if (!guideContent || tocLinks.length === 0) return;
+    
+    // ToC link clicks
+    tocLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetId = link.getAttribute('href').substring(1);
+            const targetElement = document.getElementById(targetId);
+            if (targetElement) {
+                targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                // Update active state
+                tocLinks.forEach(l => l.classList.remove('active'));
+                link.classList.add('active');
+            }
+        });
+    });
+    
+    // Scroll spy - highlight current section in ToC
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const id = entry.target.getAttribute('id');
+                tocLinks.forEach(link => {
+                    if (link.getAttribute('href') === `#${id}`) {
+                        tocLinks.forEach(l => l.classList.remove('active'));
+                        link.classList.add('active');
+                    }
+                });
+            }
+        });
+    }, {
+        rootMargin: '-20% 0px -70% 0px'
+    });
+    
+    // Observe all h2 sections
+    document.querySelectorAll('.guide-content h2[id]').forEach(section => {
+        observer.observe(section);
+    });
+}
+
+// Handle help icon clicks
+function handleHelpIconClick(e, sectionId) {
+    e.preventDefault();
+    // Switch to help tab
+    switchTab('help');
+    // Scroll to the relevant section after a short delay
+    setTimeout(() => {
+        const section = document.getElementById(sectionId);
+        if (section) {
+            section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }, 100);
 }
 
 // ============================================
@@ -418,10 +834,14 @@ function switchTab(tabName) {
 // ============================================
 
 function initializeUI() {
+    updateTableHeaders();
     renderMappingTab();
     populateThemeSelector();
     
-    // Populate filters if data exists
+    // Populate mapping-based filters (Projects, Teams, Roles, Work Types) in both tabs
+    populateMappingFilters();
+    
+    // Populate data-based filters if timesheet data exists
     if (state.timesheetData.length > 0) {
         populateDataFilters();
     }
@@ -431,8 +851,27 @@ function renderMappingTab() {
     renderProjects();
     renderTeams();
     renderRoles();
+    renderWorkTypes();
     renderPeople();
     updatePeopleFilters();
+}
+
+// Populate filters with mapping data (Projects, Teams, Roles, Work Types)
+// This is called on page load regardless of timesheet data
+function populateMappingFilters() {
+    // Populate Timesheet Data tab mapping-based filters
+    populateMultiSelect('project-filter', state.projects);
+    populateMultiSelect('team-filter', state.teams);
+    populateMultiSelect('role-filter', state.roles);
+    populateMultiSelect('work-type-filter', state.workTypes);
+    populateMultiSelect('person-filter', Object.keys(state.people).sort());
+    
+    // Populate Reports tab mapping-based filters
+    populateMultiSelect('report-project-filter', state.projects);
+    populateMultiSelect('report-team-filter', state.teams);
+    populateMultiSelect('report-role-filter', state.roles);
+    populateMultiSelect('report-work-type-filter', state.workTypes);
+    populateMultiSelect('report-person-filter', Object.keys(state.people).sort());
 }
 
 // ---------- PROJECTS ----------
@@ -584,11 +1023,13 @@ function renderRoles() {
         if (i < paginated.length) {
             const role = paginated[i];
             const peopleCount = Object.values(state.people).filter(p => p.role === role).length;
+            const workType = state.roleWorkType[role] || '-';
             const globalIdx = start + i + 1;
             rows.push(`
                 <tr>
                     <td class="row-number-col">${globalIdx}</td>
                     <td>${escapeHtml(role)}</td>
+                    <td>${escapeHtml(workType)}</td>
                     <td>${peopleCount}</td>
                     <td class="actions-cell">
                         <button class="btn-icon" data-action="edit" data-type="role" data-value="${escapeHtml(role)}" title="Edit">✏️</button>
@@ -597,7 +1038,7 @@ function renderRoles() {
                 </tr>
             `);
         } else {
-            rows.push('<tr><td class="row-number-col"></td><td></td><td></td><td></td></tr>');
+            rows.push('<tr><td class="row-number-col"></td><td></td><td></td><td></td><td></td></tr>');
         }
     }
     tbody.innerHTML = rows.join('');
@@ -614,6 +1055,11 @@ async function deleteRole(roleName) {
     
     state.roles = state.roles.filter(r => r !== roleName);
     
+    // Remove role from roleWorkType mapping
+    if (state.roleWorkType[roleName]) {
+        delete state.roleWorkType[roleName];
+    }
+    
     Object.keys(state.people).forEach(person => {
         if (state.people[person].role === roleName) {
             state.people[person].role = null;
@@ -625,6 +1071,76 @@ async function deleteRole(roleName) {
     renderPeople();
 }
 
+// ---------- WORK TYPES ----------
+
+function renderWorkTypes() {
+    const tbody = document.getElementById('work-type-tbody');
+    const search = state.search.workTypes.toLowerCase();
+    
+    const filtered = state.workTypes.filter(wt => 
+        wt.toLowerCase().includes(search)
+    );
+    
+    const { currentPage, itemsPerPage } = state.pagination.workTypes;
+    const start = (currentPage - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    const paginated = filtered.slice(start, end);
+    
+    // Render table with fixed number of rows
+    const rows = [];
+    for (let i = 0; i < itemsPerPage; i++) {
+        if (i < paginated.length) {
+            const workType = paginated[i];
+            // Count how many roles have this work type
+            const rolesCount = Object.values(state.roleWorkType).filter(wt => wt === workType).length;
+            const globalIdx = start + i + 1;
+            rows.push(`
+                <tr>
+                    <td class="row-number-col">${globalIdx}</td>
+                    <td>${escapeHtml(workType)}</td>
+                    <td>${rolesCount}</td>
+                    <td class="actions-cell">
+                        <button class="btn-icon" data-action="edit" data-type="workType" data-value="${escapeHtml(workType)}" title="Edit">✏️</button>
+                        <button class="btn-icon" data-action="delete" data-type="workType" data-value="${escapeHtml(workType)}" title="Delete">🗑️</button>
+                    </td>
+                </tr>
+            `);
+        } else {
+            rows.push('<tr><td class="row-number-col"></td><td></td><td></td><td></td></tr>');
+        }
+    }
+    tbody.innerHTML = rows.join('');
+    
+    // Render pagination for work types
+    const paginationDiv = document.getElementById('work-type-pagination');
+    if (paginationDiv && filtered.length > 0) {
+        renderPagination('workTypes', filtered.length);
+    } else if (paginationDiv) {
+        paginationDiv.innerHTML = '';
+    }
+}
+
+function editWorkType(workTypeName) {
+    openModal('workType', 'edit', workTypeName);
+}
+
+async function deleteWorkType(workTypeName) {
+    if (!confirm(`Delete work type "${workTypeName}"?`)) return;
+    
+    state.workTypes = state.workTypes.filter(wt => wt !== workTypeName);
+    
+    // Remove work type from roleWorkType mapping
+    Object.keys(state.roleWorkType).forEach(role => {
+        if (state.roleWorkType[role] === workTypeName) {
+            delete state.roleWorkType[role];
+        }
+    });
+    
+    await saveToLocalStorage();
+    renderWorkTypes();
+    renderRoles();
+}
+
 // ---------- PEOPLE ----------
 
 function renderPeople() {
@@ -632,6 +1148,7 @@ function renderPeople() {
     const search = state.search.people.toLowerCase();
     const teamFilter = document.getElementById('person-team-filter').value;
     const projectFilter = document.getElementById('person-project-filter').value;
+    const roleFilter = document.getElementById('person-role-filter').value;
     
     // Filter people
     let filtered = Object.keys(state.people).filter(person => {
@@ -639,7 +1156,8 @@ function renderPeople() {
         const matchesSearch = person.toLowerCase().includes(search);
         const matchesTeam = !teamFilter || data.team === teamFilter;
         const matchesProject = !projectFilter || data.project === projectFilter;
-        return matchesSearch && matchesTeam && matchesProject;
+        const matchesRole = !roleFilter || data.role === roleFilter;
+        return matchesSearch && matchesTeam && matchesProject && matchesRole;
     });
     
     filtered.sort();
@@ -656,6 +1174,7 @@ function renderPeople() {
         tbody.innerHTML = paginated.map((person, idx) => {
             const data = state.people[person];
             const totalHours = calculatePersonHours(person);
+            const displayValue = convertValue(totalHours);
             const globalIdx = start + idx + 1;
             return `
                 <tr>
@@ -664,7 +1183,7 @@ function renderPeople() {
                     <td>${data.team ? escapeHtml(data.team) : '-'}</td>
                     <td>${data.project ? escapeHtml(data.project) : '-'}</td>
                     <td>${data.role ? escapeHtml(data.role) : '-'}</td>
-                    <td>${totalHours.toFixed(1)}</td>
+                    <td>${formatNumber(displayValue)}</td>
                     <td class="actions-cell">
                         <button class="btn-icon" data-action="edit" data-type="person" data-value="${escapeHtml(person)}" title="Edit">✏️</button>
                         <button class="btn-icon" data-action="delete" data-type="person" data-value="${escapeHtml(person)}" title="Delete">🗑️</button>
@@ -709,23 +1228,40 @@ function updatePeopleFilters() {
     projectFilter.innerHTML = '<option value="">All Projects</option>' +
         state.projects.map(project => `<option value="${escapeHtml(project)}">${escapeHtml(project)}</option>`).join('');
     projectFilter.value = currentProject;
+    
+    // Update role filter
+    const roleFilter = document.getElementById('person-role-filter');
+    const currentRole = roleFilter.value;
+    roleFilter.innerHTML = '<option value="">All Roles</option>' +
+        state.roles.map(role => `<option value="${escapeHtml(role)}">${escapeHtml(role)}</option>`).join('');
+    roleFilter.value = currentRole;
 }
 
 // ---------- PAGINATION ----------
 
 function renderPagination(entity, totalItems) {
-    const paginationDiv = document.getElementById(`${entity === 'filteredData' ? 'data' : entity}-pagination`);
+    // Map entity to pagination div id
+    let paginationDivId;
+    if (entity === 'filteredData') {
+        paginationDivId = 'data-pagination';
+    } else if (entity === 'workTypes') {
+        paginationDivId = 'work-type-pagination';
+    } else {
+        paginationDivId = `${entity}-pagination`;
+    }
+    
+    const paginationDiv = document.getElementById(paginationDivId);
     if (!paginationDiv) return;
     
-    const paginationKey = entity === 'person' ? 'people' : entity === 'filteredData' ? 'filteredData' : `${entity}s`;
+    const paginationKey = entity === 'person' ? 'people' : entity === 'filteredData' ? 'filteredData' : entity === 'workTypes' ? 'workTypes' : `${entity}s`;
     const { currentPage, itemsPerPage } = state.pagination[paginationKey];
     const totalPages = Math.ceil(totalItems / itemsPerPage);
     
     // Always show total count
     let html = `<div class="pagination-info">Total: ${totalItems}</div>`;
     
-    // Always show controls for projects, teams, roles tables
-    const alwaysShowControls = ['project', 'team', 'role'].includes(entity);
+    // Always show controls for projects, teams, roles, and work types tables
+    const alwaysShowControls = ['project', 'team', 'role', 'workTypes'].includes(entity);
     
     if (totalPages <= 1 && !alwaysShowControls) {
         paginationDiv.innerHTML = html;
@@ -757,12 +1293,17 @@ function renderPagination(entity, totalItems) {
 }
 
 function changePage(entity, page) {
-    const key = entity === 'person' ? 'people' : entity === 'filteredData' ? 'filteredData' : `${entity}s`;
+    const key = entity === 'person' ? 'people' : 
+                entity === 'filteredData' ? 'filteredData' : 
+                entity === 'workType' ? 'workTypes' : 
+                entity === 'workTypes' ? 'workTypes' :
+                `${entity}s`;
     state.pagination[key].currentPage = page;
     
     if (entity === 'project') renderProjects();
     else if (entity === 'team') renderTeams();
     else if (entity === 'role') renderRoles();
+    else if (entity === 'workType' || entity === 'workTypes') renderWorkTypes();
     else if (entity === 'person') renderPeople();
     else if (entity === 'filteredData') renderFilteredData();
 }
@@ -781,7 +1322,7 @@ function openModal(type, mode = 'add', existingValue = null) {
     modal.dataset.existing = existingValue || '';
     
     // Set title
-    const typeLabel = type.charAt(0).toUpperCase() + type.slice(1);
+    const typeLabel = type === 'workType' ? 'Work Type' : type.charAt(0).toUpperCase() + type.slice(1);
     modalTitle.textContent = mode === 'add' ? `Add ${typeLabel}` : `Edit ${typeLabel}`;
     
     // Set body content
@@ -816,6 +1357,23 @@ function openModal(type, mode = 'add', existingValue = null) {
                     <option value="">None</option>
                     ${state.roles.map(r => `<option value="${escapeHtml(r)}" 
                         ${personData.role === r ? 'selected' : ''}>${escapeHtml(r)}</option>`).join('')}
+                </select>
+            </div>
+        `;
+    } else if (type === 'role') {
+        const workType = existingValue ? (state.roleWorkType[existingValue] || '') : '';
+        modalBody.innerHTML = `
+            <div class="form-group">
+                <label for="modal-input">Role Name *</label>
+                <input type="text" id="modal-input" class="input" 
+                       value="${existingValue ? escapeHtml(existingValue) : ''}" required>
+            </div>
+            <div class="form-group">
+                <label for="modal-role-work-type">Default Work Type</label>
+                <select id="modal-role-work-type" class="select">
+                    <option value="">None</option>
+                    ${state.workTypes.map(wt => `<option value="${escapeHtml(wt)}" 
+                        ${workType === wt ? 'selected' : ''}>${escapeHtml(wt)}</option>`).join('')}
                 </select>
             </div>
         `;
@@ -895,7 +1453,14 @@ async function saveModal() {
             }
             
             const array = type === 'project' ? state.projects : 
-                         type === 'team' ? state.teams : state.roles;
+                         type === 'team' ? state.teams : 
+                         type === 'role' ? state.roles :
+                         type === 'workType' ? state.workTypes : null;
+            
+            if (!array) {
+                alert('Invalid type');
+                return;
+            }
             
             if (mode === 'add') {
                 if (array.includes(value)) {
@@ -904,6 +1469,17 @@ async function saveModal() {
                 }
                 array.push(value);
                 array.sort();
+                
+                // Save work type for role if this is a role
+                if (type === 'role') {
+                    const workTypeSelect = document.getElementById('modal-role-work-type');
+                    if (workTypeSelect) {
+                        const selectedWorkType = workTypeSelect.value;
+                        if (selectedWorkType) {
+                            state.roleWorkType[value] = selectedWorkType;
+                        }
+                    }
+                }
             } else {
                 // Edit mode - update the value
                 const index = array.indexOf(existing);
@@ -921,6 +1497,33 @@ async function saveModal() {
                             state.people[person].role = value;
                         }
                     });
+                    
+                    // Update roleWorkType mapping if this is a role
+                    if (type === 'role') {
+                        const workTypeSelect = document.getElementById('modal-role-work-type');
+                        if (workTypeSelect) {
+                            const selectedWorkType = workTypeSelect.value;
+                            // Remove old mapping if role name changed
+                            if (existing !== value && state.roleWorkType[existing]) {
+                                delete state.roleWorkType[existing];
+                            }
+                            // Set new mapping
+                            if (selectedWorkType) {
+                                state.roleWorkType[value] = selectedWorkType;
+                            } else {
+                                delete state.roleWorkType[value];
+                            }
+                        }
+                    }
+                    
+                    // Update roleWorkType references if this is a workType being renamed
+                    if (type === 'workType') {
+                        Object.keys(state.roleWorkType).forEach(role => {
+                            if (state.roleWorkType[role] === existing) {
+                                state.roleWorkType[role] = value;
+                            }
+                        });
+                    }
                 }
             }
         }
@@ -961,6 +1564,8 @@ function importAllData() {
                 state.projects = data.projects || [];
                 state.teams = data.teams || [];
                 state.roles = data.roles || [];
+                state.workTypes = data.workTypes || [];
+                state.roleWorkType = data.roleWorkType || {};
                 state.people = data.people || {};
                 
                 await saveToLocalStorage();
@@ -981,6 +1586,8 @@ function exportAllData() {
         projects: state.projects,
         teams: state.teams,
         roles: state.roles,
+        workTypes: state.workTypes,
+        roleWorkType: state.roleWorkType,
         people: state.people
     };
     
@@ -1056,16 +1663,6 @@ function applyPersonMapping() {
         const fullName = row['Full name'];
         if (!fullName) return;
         
-        // Check if row already has team/project values
-        const hasExistingTeam = row._overrides?.team || row.Team;
-        const hasExistingProject = row._overrides?.project || row.Project;
-        
-        // If not overriding and already has values, skip
-        if (!overrideExisting && (hasExistingTeam || hasExistingProject)) {
-            skippedCount++;
-            return;
-        }
-        
         // Find person mapping
         let personData = null;
         for (const [personKey, data] of Object.entries(state.people)) {
@@ -1075,20 +1672,48 @@ function applyPersonMapping() {
             }
         }
         
-        if (personData) {
+        if (!personData) {
+            skippedCount++;
+            return;
+        }
+        
+        // Check existing values
+        const existingTeam = row._overrides?.team || row.Team;
+        const existingProject = row._overrides?.project || row.Project;
+        const existingWorkType = row._overrides?.workType || row['Work Type'];
+        
+        // Determine what needs to be updated
+        let needsUpdate = false;
+        const updates = {};
+        
+        // Team: add if missing or override is checked
+        if (personData.team && (overrideExisting || !existingTeam)) {
+            updates.team = personData.team;
+            needsUpdate = true;
+        }
+        
+        // Project: add if missing or override is checked
+        if (personData.project && (overrideExisting || !existingProject)) {
+            updates.project = personData.project;
+            needsUpdate = true;
+        }
+        
+        // Work Type: add role's default work type if missing or override is checked
+        if (personData.role && state.roleWorkType[personData.role]) {
+            if (overrideExisting || !existingWorkType) {
+                updates.workType = state.roleWorkType[personData.role];
+                needsUpdate = true;
+            }
+        }
+        
+        if (needsUpdate) {
             // Initialize overrides if doesn't exist
             if (!row._overrides) {
                 row._overrides = {};
             }
             
-            // Apply mapping
-            if (personData.team) {
-                row._overrides.team = personData.team;
-            }
-            if (personData.project) {
-                row._overrides.project = personData.project;
-            }
-            
+            // Apply updates
+            Object.assign(row._overrides, updates);
             updatedCount++;
             
             // Also update in original timesheetData
@@ -1101,13 +1726,10 @@ function applyPersonMapping() {
                 if (!originalRow._overrides) {
                     originalRow._overrides = {};
                 }
-                if (personData.team) {
-                    originalRow._overrides.team = personData.team;
-                }
-                if (personData.project) {
-                    originalRow._overrides.project = personData.project;
-                }
+                Object.assign(originalRow._overrides, updates);
             }
+        } else {
+            skippedCount++;
         }
     });
     
@@ -1242,6 +1864,9 @@ function onBatchFieldChange(e) {
     if (field === 'team') {
         valueSelect.innerHTML = '<option value="">Select Team</option>' + 
             state.teams.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+    } else if (field === 'workType') {
+        valueSelect.innerHTML = '<option value="">Select Work Type</option>' + 
+            state.workTypes.map(w => `<option value="${escapeHtml(w)}">${escapeHtml(w)}</option>`).join('');
     } else if (field === 'project') {
         valueSelect.innerHTML = '<option value="">Select Project</option>' + 
             state.projects.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
@@ -1270,25 +1895,32 @@ async function applyBatchUpdate() {
         const row = state.filteredData[idx];
         if (!row) return;
         
-        // Get current team and project values (from overrides or from row data or from person mapping)
+        // Get current team, work type, and project values (from overrides or from row data or from person mapping)
         let currentTeam = null;
+        let currentWorkType = null;
         let currentProject = null;
         
         if (row._overrides) {
             currentTeam = row._overrides.team;
+            currentWorkType = row._overrides.workType;
             currentProject = row._overrides.project;
         } else {
-            // Check if row has Team/Project from CSV
+            // Check if row has Team/Work Type/Project from CSV
             currentTeam = row.Team;
+            currentWorkType = row['Work Type'];
             currentProject = row.Project;
             
             // If not in CSV, check person mapping
-            if (!currentTeam || !currentProject) {
+            if (!currentTeam || !currentWorkType || !currentProject) {
                 const fullName = row['Full name'] || '';
                 for (const [personKey, data] of Object.entries(state.people)) {
                     if (fullName && fullName.includes(personKey)) {
                         if (!currentTeam && data.team) currentTeam = data.team;
                         if (!currentProject && data.project) currentProject = data.project;
+                        // Get work type from role mapping
+                        if (!currentWorkType && data.role && state.roleWorkType[data.role]) {
+                            currentWorkType = state.roleWorkType[data.role];
+                        }
                         break;
                     }
                 }
@@ -1299,12 +1931,15 @@ async function applyBatchUpdate() {
         if (!row._overrides) {
             row._overrides = {};
             if (currentTeam) row._overrides.team = currentTeam;
+            if (currentWorkType) row._overrides.workType = currentWorkType;
             if (currentProject) row._overrides.project = currentProject;
         }
         
         // Apply update
         if (field === 'team') {
             row._overrides.team = value;
+        } else if (field === 'workType') {
+            row._overrides.workType = value;
         } else if (field === 'project') {
             row._overrides.project = value;
         }
@@ -1318,21 +1953,28 @@ async function applyBatchUpdate() {
         if (originalRow) {
             // Get current values for original row too
             let origCurrentTeam = null;
+            let origCurrentWorkType = null;
             let origCurrentProject = null;
             
             if (originalRow._overrides) {
                 origCurrentTeam = originalRow._overrides.team;
+                origCurrentWorkType = originalRow._overrides.workType;
                 origCurrentProject = originalRow._overrides.project;
             } else {
                 origCurrentTeam = originalRow.Team;
+                origCurrentWorkType = originalRow['Work Type'];
                 origCurrentProject = originalRow.Project;
                 
-                if (!origCurrentTeam || !origCurrentProject) {
+                if (!origCurrentTeam || !origCurrentWorkType || !origCurrentProject) {
                     const fullName = originalRow['Full name'] || '';
                     for (const [personKey, data] of Object.entries(state.people)) {
                         if (fullName && fullName.includes(personKey)) {
                             if (!origCurrentTeam && data.team) origCurrentTeam = data.team;
                             if (!origCurrentProject && data.project) origCurrentProject = data.project;
+                            // Get work type from role mapping
+                            if (!origCurrentWorkType && data.role && state.roleWorkType[data.role]) {
+                                origCurrentWorkType = state.roleWorkType[data.role];
+                            }
                             break;
                         }
                     }
@@ -1342,11 +1984,14 @@ async function applyBatchUpdate() {
             if (!originalRow._overrides) {
                 originalRow._overrides = {};
                 if (origCurrentTeam) originalRow._overrides.team = origCurrentTeam;
+                if (origCurrentWorkType) originalRow._overrides.workType = origCurrentWorkType;
                 if (origCurrentProject) originalRow._overrides.project = origCurrentProject;
             }
             
             if (field === 'team') {
                 originalRow._overrides.team = value;
+            } else if (field === 'workType') {
+                originalRow._overrides.workType = value;
             } else if (field === 'project') {
                 originalRow._overrides.project = value;
             }
@@ -1538,34 +2183,51 @@ function parseCSVLine(line) {
 function populateDataFilters() {
     if (state.timesheetData.length === 0) return;
     
-    // Get unique values for each filter
+    // Get unique values for each filter from timesheet data
     const activities = new Set();
     const statuses = new Set();
     const projectKeys = new Set();
     const servisValues = new Set();
+    const workTypes = new Set();
     
     state.timesheetData.forEach(row => {
         if (row['Activity Name']) activities.add(row['Activity Name']);
         if (row['Issue Status']) statuses.add(row['Issue Status']);
         if (row['Project Key']) projectKeys.add(row['Project Key']);
         if (row['Servis']) servisValues.add(row['Servis']);
+        
+        // Get work type from overrides or CSV or person mapping
+        let workType = null;
+        if (row._overrides?.workType) {
+            workType = row._overrides.workType;
+        } else if (row['Work Type']) {
+            workType = row['Work Type'];
+        } else {
+            const fullName = row['Full name'] || '';
+            for (const [personKey, data] of Object.entries(state.people)) {
+                if (fullName && fullName.includes(personKey)) {
+                    if (data.role && state.roleWorkType[data.role]) {
+                        workType = state.roleWorkType[data.role];
+                    }
+                    break;
+                }
+            }
+        }
+        if (workType) workTypes.add(workType);
     });
     
-    // Populate Timesheet Data tab filter dropdowns
-    populateMultiSelect('project-filter', state.projects);
-    populateMultiSelect('team-filter', state.teams);
-    populateMultiSelect('role-filter', state.roles);
-    populateMultiSelect('person-filter', Object.keys(state.people).sort());
+    // Populate Timesheet Data tab data-based filter dropdowns
     populateMultiSelect('activity-filter', Array.from(activities).sort());
     populateMultiSelect('issue-status-filter', Array.from(statuses).sort());
     populateMultiSelect('project-key-filter', Array.from(projectKeys).sort());
     populateMultiSelect('servis-filter', Array.from(servisValues).sort());
     
-    // Populate Reports tab filter dropdowns
-    populateMultiSelect('report-project-filter', state.projects);
-    populateMultiSelect('report-team-filter', state.teams);
-    populateMultiSelect('report-role-filter', state.roles);
-    populateMultiSelect('report-person-filter', Object.keys(state.people).sort());
+    // Also update work-type filters with actual data from timesheet
+    const allWorkTypes = new Set([...state.workTypes, ...workTypes]);
+    populateMultiSelect('work-type-filter', Array.from(allWorkTypes).sort());
+    populateMultiSelect('report-work-type-filter', Array.from(allWorkTypes).sort());
+    
+    // Populate Reports tab data-based filter dropdowns
     populateMultiSelect('report-activity-filter', Array.from(activities).sort());
     populateMultiSelect('report-issue-status-filter', Array.from(statuses).sort());
     populateMultiSelect('report-project-key-filter', Array.from(projectKeys).sort());
@@ -1609,6 +2271,8 @@ function applyFilters() {
         teamsNot: document.getElementById('team-filter-not')?.checked || false,
         roles: getSelectedValues('role-filter'),
         rolesNot: document.getElementById('role-filter-not')?.checked || false,
+        workTypes: getSelectedValues('work-type-filter'),
+        workTypesNot: document.getElementById('work-type-filter-not')?.checked || false,
         people: getSelectedValues('person-filter'),
         peopleNot: document.getElementById('person-filter-not')?.checked || false,
         activities: getSelectedValues('activity-filter'),
@@ -1640,11 +2304,15 @@ function applyFilters() {
             }
         }
         
-        // Get actual team and project with priority order:
+        // Get actual team, work type, and project with priority order:
         // 1. Override (manual edit)
-        // 2. CSV data (Team/Project columns)
+        // 2. CSV data (Team/Work Type/Project columns)
         // 3. Person mapping (fallback)
         let actualTeam = row._overrides?.team || row.Team || personData?.team;
+        let actualWorkType = row._overrides?.workType || row['Work Type'];
+        if (!actualWorkType && personData?.role) {
+            actualWorkType = state.roleWorkType[personData.role];
+        }
         let actualProject = row._overrides?.project || row.Project || personData?.project;
         
         // Apply filters with NOT logic
@@ -1659,6 +2327,10 @@ function applyFilters() {
         if (filters.roles.length && personData) {
             const isInList = filters.roles.includes(personData.role);
             if (filters.rolesNot ? isInList : !isInList) return false;
+        }
+        if (filters.workTypes.length) {
+            const isInList = filters.workTypes.includes(actualWorkType);
+            if (filters.workTypesNot ? isInList : !isInList) return false;
         }
         if (filters.people.length && personData) {
             const isInList = filters.people.includes(personData.name);
@@ -1767,8 +2439,11 @@ function toggleReportAdvancedFilters() {
 }
 
 function updateFilterBadges() {
-    const mainFilters = ['project-filter', 'team-filter', 'role-filter', 'activity-filter', 'servis-filter'];
-    const advancedFilterSelects = ['person-filter', 'issue-status-filter', 'project-key-filter'];
+    const allFilters = [
+        'project-filter', 'team-filter', 'role-filter', 'work-type-filter', 'servis-filter',
+        'activity-filter', 'person-filter', 'issue-status-filter', 'project-key-filter'
+    ];
+    
     const issueSummary = document.getElementById('issue-summary-filter')?.value || '';
     const workDateStart = document.getElementById('work-date-start')?.value || '';
     const workDateEnd = document.getElementById('work-date-end')?.value || '';
@@ -1776,21 +2451,68 @@ function updateFilterBadges() {
     let mainCount = 0;
     let advancedCount = 0;
     
-    mainFilters.forEach(id => {
+    // Update individual filter badges and clear buttons
+    allFilters.forEach(id => {
         const values = getSelectedValues(id);
-        mainCount += values.length;
+        const count = values.length;
+        const countBadge = document.getElementById(`${id}-count`);
+        const clearBtn = document.getElementById(`clear-${id}`);
+        
+        if (countBadge) {
+            if (count > 0) {
+                countBadge.textContent = count;
+                countBadge.style.display = 'inline-flex';
+            } else {
+                countBadge.style.display = 'none';
+            }
+        }
+        
+        if (clearBtn) {
+            clearBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+        }
+        
+        // Count for main badge
+        if (['project-filter', 'team-filter', 'role-filter', 'work-type-filter', 'servis-filter'].includes(id)) {
+            mainCount += count;
+        } else {
+            advancedCount += count;
+        }
     });
+    
+    // Handle issue summary filter
+    const issueSummaryBadge = document.getElementById('issue-summary-filter-count');
+    const issueSummaryClearBtn = document.getElementById('clear-issue-summary-filter');
+    if (issueSummary.trim()) {
+        if (issueSummaryBadge) {
+            issueSummaryBadge.textContent = '1';
+            issueSummaryBadge.style.display = 'inline-flex';
+        }
+        if (issueSummaryClearBtn) {
+            issueSummaryClearBtn.style.display = 'inline-flex';
+        }
+        mainCount++; // Issue summary is now a main filter
+    } else {
+        if (issueSummaryBadge) issueSummaryBadge.style.display = 'none';
+        if (issueSummaryClearBtn) issueSummaryClearBtn.style.display = 'none';
+    }
     
     // Count date filters as main filters
-    if (workDateStart) mainCount++;
-    if (workDateEnd) mainCount++;
+    const clearWorkDateStartBtn = document.getElementById('clear-work-date-start');
+    const clearWorkDateEndBtn = document.getElementById('clear-work-date-end');
     
-    advancedFilterSelects.forEach(id => {
-        const values = getSelectedValues(id);
-        advancedCount += values.length;
-    });
+    if (workDateStart) {
+        mainCount++;
+        if (clearWorkDateStartBtn) clearWorkDateStartBtn.style.display = 'inline-flex';
+    } else {
+        if (clearWorkDateStartBtn) clearWorkDateStartBtn.style.display = 'none';
+    }
     
-    if (issueSummary.trim()) advancedCount++;
+    if (workDateEnd) {
+        mainCount++;
+        if (clearWorkDateEndBtn) clearWorkDateEndBtn.style.display = 'inline-flex';
+    } else {
+        if (clearWorkDateEndBtn) clearWorkDateEndBtn.style.display = 'none';
+    }
     
     const totalCount = mainCount + advancedCount;
     const filtersBadge = document.getElementById('filters-badge');
@@ -1816,31 +2538,112 @@ function updateFilterBadges() {
 }
 
 function updateReportFilterBadges() {
-    const mainFilters = ['report-project-filter', 'report-team-filter', 'report-role-filter', 'report-activity-filter', 'report-servis-filter'];
-    const advancedFilterSelects = ['report-person-filter', 'report-issue-status-filter', 'report-project-key-filter'];
-    const issueSummary = document.getElementById('report-issue-summary-filter')?.value || '';
-    const workDateStart = document.getElementById('report-work-date-start')?.value || '';
-    const workDateEnd = document.getElementById('report-work-date-end')?.value || '';
+    // Main filters (shown directly)
+    const mainFilterIds = [
+        'report-project-filter',
+        'report-team-filter', 
+        'report-role-filter',
+        'report-work-type-filter',
+        'report-servis-filter'
+    ];
+    
+    // Advanced filters
+    const advancedFilterIds = [
+        'report-activity-filter',
+        'report-person-filter',
+        'report-issue-status-filter',
+        'report-project-key-filter'
+    ];
     
     let mainCount = 0;
     let advancedCount = 0;
     
-    mainFilters.forEach(id => {
+    // Update main filter badges
+    mainFilterIds.forEach(id => {
+        const select = document.getElementById(id);
         const values = getSelectedValues(id);
-        mainCount += values.length;
+        const count = values.length;
+        const badge = document.getElementById(`${id}-count`);
+        const clearBtn = document.getElementById(`clear-${id}`);
+        
+        if (badge) {
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'inline-flex';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+        
+        if (clearBtn) {
+            clearBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+        }
+        
+        mainCount += count;
     });
     
-    // Count date filters as main filters
-    if (workDateStart) mainCount++;
-    if (workDateEnd) mainCount++;
-    
-    advancedFilterSelects.forEach(id => {
+    // Update advanced filter badges
+    advancedFilterIds.forEach(id => {
+        const select = document.getElementById(id);
         const values = getSelectedValues(id);
-        advancedCount += values.length;
+        const count = values.length;
+        const badge = document.getElementById(`${id}-count`);
+        const clearBtn = document.getElementById(`clear-${id}`);
+        
+        if (badge) {
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'inline-flex';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+        
+        if (clearBtn) {
+            clearBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+        }
+        
+        advancedCount += count;
     });
     
-    if (issueSummary.trim()) advancedCount++;
+    // Issue Summary filter (main filter now)
+    const issueSummary = document.getElementById('report-issue-summary-filter')?.value || '';
+    const issueSummaryBadge = document.getElementById('report-issue-summary-filter-count');
+    const issueSummaryClearBtn = document.getElementById('clear-report-issue-summary-filter');
     
+    if (issueSummaryBadge && issueSummaryClearBtn) {
+        if (issueSummary.trim()) {
+            issueSummaryBadge.textContent = '1';
+            issueSummaryBadge.style.display = 'inline-flex';
+            issueSummaryClearBtn.style.display = 'inline-flex';
+            mainCount++;
+        } else {
+            issueSummaryBadge.style.display = 'none';
+            issueSummaryClearBtn.style.display = 'none';
+        }
+    }
+    
+    // Date filters (main filters)
+    const workDateStart = document.getElementById('report-work-date-start')?.value || '';
+    const workDateEnd = document.getElementById('report-work-date-end')?.value || '';
+    const clearReportWorkDateStartBtn = document.getElementById('clear-report-work-date-start');
+    const clearReportWorkDateEndBtn = document.getElementById('clear-report-work-date-end');
+    
+    if (workDateStart) {
+        mainCount++;
+        if (clearReportWorkDateStartBtn) clearReportWorkDateStartBtn.style.display = 'inline-flex';
+    } else {
+        if (clearReportWorkDateStartBtn) clearReportWorkDateStartBtn.style.display = 'none';
+    }
+    
+    if (workDateEnd) {
+        mainCount++;
+        if (clearReportWorkDateEndBtn) clearReportWorkDateEndBtn.style.display = 'inline-flex';
+    } else {
+        if (clearReportWorkDateEndBtn) clearReportWorkDateEndBtn.style.display = 'none';
+    }
+    
+    // Update total badges
     const totalCount = mainCount + advancedCount;
     const filtersBadge = document.getElementById('report-filters-badge');
     const advancedBadge = document.getElementById('report-advanced-filters-badge');
@@ -1871,12 +2674,14 @@ function clearFilters() {
         });
     });
     
+    // Clear all NOT checkboxes
+    document.querySelectorAll('#tab-data input[type="checkbox"][id$="-not"]').forEach(checkbox => {
+        checkbox.checked = false;
+    });
+    
     // Clear text inputs
     const issueSummaryFilter = document.getElementById('issue-summary-filter');
     if (issueSummaryFilter) issueSummaryFilter.value = '';
-    
-    const issueSummaryNot = document.getElementById('issue-summary-not');
-    if (issueSummaryNot) issueSummaryNot.checked = false;
     
     // Clear date inputs
     const workDateStart = document.getElementById('work-date-start');
@@ -1896,12 +2701,14 @@ function clearReportFilters() {
         });
     });
     
+    // Clear all NOT checkboxes
+    document.querySelectorAll('#tab-reports input[type="checkbox"][id$="-not"]').forEach(checkbox => {
+        checkbox.checked = false;
+    });
+    
     // Clear text inputs
     const issueSummaryFilter = document.getElementById('report-issue-summary-filter');
     if (issueSummaryFilter) issueSummaryFilter.value = '';
-    
-    const issueSummaryNot = document.getElementById('report-issue-summary-not');
-    if (issueSummaryNot) issueSummaryNot.checked = false;
     
     // Clear date inputs
     const reportWorkDateStart = document.getElementById('report-work-date-start');
@@ -1934,7 +2741,7 @@ function renderFilteredData() {
     const tbody = document.getElementById('data-tbody');
     
     if (state.filteredData.length === 0) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No data matches the filters</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No data matches the filters</td></tr>';
         const paginationDiv = document.getElementById('data-pagination');
         if (paginationDiv) paginationDiv.innerHTML = '';
         updateSelectedCount();
@@ -1953,19 +2760,21 @@ function renderFilteredData() {
         // Extract person name: take text before "-", remove spaces
         const personName = fullName.split('-')[0].trim();
         
-        let team = '-', project = '-';
+        let team = '-', workType = '-', project = '-';
         
         // Priority order:
         // 1. Check for overrides (manual edits)
-        // 2. Check CSV data (Team and Project columns)
+        // 2. Check CSV data (Team, Work Type, and Project columns)
         // 3. Check person mapping (fallback)
         
         if (row._overrides) {
             team = row._overrides.team || '-';
+            workType = row._overrides.workType || '-';
             project = row._overrides.project || '-';
-        } else if (row.Team || row.Project) {
+        } else if (row.Team || row['Work Type'] || row.Project) {
             // Use data from CSV if available
             team = row.Team || '-';
+            workType = row['Work Type'] || '-';
             project = row.Project || '-';
         } else {
             // Fallback to person mapping
@@ -1973,6 +2782,10 @@ function renderFilteredData() {
                 if (fullName && fullName.includes(personKey)) {
                     team = data.team || '-';
                     project = data.project || '-';
+                    // Get work type from role mapping
+                    if (data.role && state.roleWorkType[data.role]) {
+                        workType = state.roleWorkType[data.role];
+                    }
                     break;
                 }
             }
@@ -2003,8 +2816,9 @@ function renderFilteredData() {
                 <td onclick="showRowDetails(${actualIdx})">${escapeHtml(row['Activity Name'] || '')}</td>
                 <td onclick="showRowDetails(${actualIdx})">${escapeHtml(truncatedSummary)}</td>
                 <td onclick="showRowDetails(${actualIdx})">${escapeHtml(row['Issue Status'] || '')}</td>
-                <td onclick="showRowDetails(${actualIdx})">${parseFloat(row.Hours || 0).toFixed(1)}</td>
+                <td onclick="showRowDetails(${actualIdx})">${formatNumber(convertValue(parseFloat(row.Hours || 0)))}</td>
                 <td onclick="showRowDetails(${actualIdx})">${escapeHtml(team)}</td>
+                <td onclick="showRowDetails(${actualIdx})">${escapeHtml(workType)}</td>
                 <td onclick="showRowDetails(${actualIdx})">${escapeHtml(project)}</td>
             </tr>
         `;
@@ -2029,10 +2843,12 @@ function updateSummaryStats() {
         totalHours += parseFloat(row.Hours) || 0;
     });
     
-    document.getElementById('total-records').textContent = state.filteredData.length;
-    document.getElementById('total-hours').textContent = totalHours.toFixed(1);
-    document.getElementById('unique-people').textContent = uniquePeople.size;
-    document.getElementById('unique-issues').textContent = uniqueIssues.size;
+    const displayHours = convertValue(totalHours);
+    
+    document.getElementById('total-records').textContent = formatNumber(state.filteredData.length);
+    document.getElementById('total-hours').textContent = formatNumber(displayHours);
+    document.getElementById('unique-people').textContent = formatNumber(uniquePeople.size);
+    document.getElementById('unique-issues').textContent = formatNumber(uniqueIssues.size);
 }
 
 function showRowDetails(rowIndex) {
@@ -2041,19 +2857,21 @@ function showRowDetails(rowIndex) {
     
     const fullName = row['Full name'] || '';
     const personName = fullName.split('-')[0].trim();
-    let team = '-', project = '-';
+    let team = '-', workType = '-', project = '-';
     
     // Priority order:
     // 1. Check for overrides (manual edits)
-    // 2. Check CSV data (Team and Project columns)
+    // 2. Check CSV data (Team/Work Type/Project columns)
     // 3. Check person mapping (fallback)
     
     if (row._overrides) {
         team = row._overrides.team || '-';
+        workType = row._overrides.workType || '-';
         project = row._overrides.project || '-';
-    } else if (row.Team || row.Project) {
+    } else if (row.Team || row['Work Type'] || row.Project) {
         // Use data from CSV if available
         team = row.Team || '-';
+        workType = row['Work Type'] || '-';
         project = row.Project || '-';
     } else {
         // Fallback to person mapping
@@ -2061,6 +2879,10 @@ function showRowDetails(rowIndex) {
             if (fullName && fullName.includes(personKey)) {
                 team = data.team || '-';
                 project = data.project || '-';
+                // Get work type from role mapping
+                if (data.role && state.roleWorkType[data.role]) {
+                    workType = state.roleWorkType[data.role];
+                }
                 break;
             }
         }
@@ -2115,6 +2937,10 @@ function showRowDetails(rowIndex) {
                 <span>${escapeHtml(team)}</span>
             </div>
             <div class="detail-row">
+                <strong>Work Type:</strong>
+                <span>${escapeHtml(workType)}</span>
+            </div>
+            <div class="detail-row">
                 <strong>Project:</strong>
                 <span>${escapeHtml(project)}</span>
             </div>
@@ -2157,19 +2983,21 @@ function showRowEdit(rowIndex) {
     
     const fullName = row['Full name'] || '';
     const personName = fullName.split('-')[0].trim();
-    let team = '-', project = '-';
+    let team = '-', workType = '-', project = '-';
     
     // Priority order:
     // 1. Check for overrides (manual edits)
-    // 2. Check CSV data (Team and Project columns)
+    // 2. Check CSV data (Team/Work Type/Project columns)
     // 3. Check person mapping (fallback)
     
     if (row._overrides) {
         team = row._overrides.team || '-';
+        workType = row._overrides.workType || '-';
         project = row._overrides.project || '-';
-    } else if (row.Team || row.Project) {
+    } else if (row.Team || row['Work Type'] || row.Project) {
         // Use data from CSV if available
         team = row.Team || '-';
+        workType = row['Work Type'] || '-';
         project = row.Project || '-';
     } else {
         // Fallback to person mapping
@@ -2177,6 +3005,10 @@ function showRowEdit(rowIndex) {
             if (fullName && fullName.includes(personKey)) {
                 team = data.team || '-';
                 project = data.project || '-';
+                // Get work type from role mapping
+                if (data.role && state.roleWorkType[data.role]) {
+                    workType = state.roleWorkType[data.role];
+                }
                 break;
             }
         }
@@ -2231,6 +3063,13 @@ function showRowEdit(rowIndex) {
                 </select>
             </div>
             <div class="detail-row">
+                <label><strong>Work Type (Override):</strong></label>
+                <select id="edit-work-type" class="input">
+                    <option value="">- Select Work Type -</option>
+                    ${state.workTypes.map(w => `<option value="${escapeHtml(w)}" ${w === workType ? 'selected' : ''}>${escapeHtml(w)}</option>`).join('')}
+                </select>
+            </div>
+            <div class="detail-row">
                 <label><strong>Project (Override):</strong></label>
                 <select id="edit-project" class="input">
                     <option value="">- Select Project -</option>
@@ -2264,19 +3103,22 @@ function saveRowEdit(rowIndex) {
     if (!row) return;
     
     const teamInput = document.getElementById('edit-team');
+    const workTypeInput = document.getElementById('edit-work-type');
     const projectInput = document.getElementById('edit-project');
     
-    if (!teamInput || !projectInput) {
+    if (!teamInput || !workTypeInput || !projectInput) {
         console.error('Edit inputs not found');
         return;
     }
     
     const newTeam = teamInput.value.trim();
+    const newWorkType = workTypeInput.value.trim();
     const newProject = projectInput.value.trim();
     
     // Store overrides in the row data
     if (!row._overrides) row._overrides = {};
     row._overrides.team = newTeam;
+    row._overrides.workType = newWorkType;
     row._overrides.project = newProject;
     
     // Also update in original timesheetData
@@ -2286,6 +3128,7 @@ function saveRowEdit(rowIndex) {
             state.timesheetData[originalIndex]._overrides = {};
         }
         state.timesheetData[originalIndex]._overrides.team = newTeam;
+        state.timesheetData[originalIndex]._overrides.workType = newWorkType;
         state.timesheetData[originalIndex]._overrides.project = newProject;
     }
     
@@ -2302,41 +3145,16 @@ function exportFilteredDataCSV() {
         return;
     }
     
-    // Prepare headers (use first row to get all keys, exclude _overrides)
-    const headers = Object.keys(state.filteredData[0]).filter(h => h !== '_overrides');
-    
-    // Add Team and Project columns if not present
-    if (!headers.includes('Team')) headers.push('Team');
-    if (!headers.includes('Project')) headers.push('Project');
+    // Prepare headers (use first row to get all keys, exclude _overrides, Team, Work Type, and Project)
+    const headers = Object.keys(state.filteredData[0]).filter(h => 
+        h !== '_overrides' && h !== 'Team' && h !== 'Work Type' && h !== 'Project'
+    );
     
     // Build CSV
     let csv = headers.map(h => `"${h}"`).join(',') + '\n';
     
     state.filteredData.forEach(row => {
-        // Get team and project from overrides first, then from person mapping
-        const fullName = row['Full name'];
-        let team = '', project = '';
-        
-        // Check for overrides first
-        if (row._overrides) {
-            team = row._overrides.team || '';
-            project = row._overrides.project || '';
-        }
-        
-        // If not in overrides, check person mapping
-        if (!team || !project) {
-            for (const [personKey, data] of Object.entries(state.people)) {
-                if (fullName && fullName.includes(personKey)) {
-                    if (!team) team = data.team || '';
-                    if (!project) project = data.project || '';
-                    break;
-                }
-            }
-        }
-        
         const values = headers.map(h => {
-            if (h === 'Team') return `"${team}"`;
-            if (h === 'Project') return `"${project}"`;
             const value = row[h] || '';
             return `"${String(value).replace(/"/g, '""')}"`;
         });
@@ -2511,36 +3329,6 @@ function addServisMapping() {
 // REPORTS TAB (tab-reports)
 // ============================================
 
-function syncReportFilters() {
-    // Copy filter selections from data tab to reports tab
-    const filterMap = [
-        ['project-filter', 'report-project-filter'],
-        ['team-filter', 'report-team-filter'],
-        ['role-filter', 'report-role-filter'],
-        ['person-filter', 'report-person-filter'],
-        ['activity-filter', 'report-activity-filter'],
-        ['issue-status-filter', 'report-issue-status-filter']
-    ];
-    
-    filterMap.forEach(([sourceId, targetId]) => {
-        const source = document.getElementById(sourceId);
-        const target = document.getElementById(targetId);
-        
-        if (source && target) {
-            // Populate target with same options
-            const options = Array.from(source.options).map(o => o.value);
-            populateMultiSelect(targetId.replace('report-', '').replace('-filter', ''), 
-                               options.filter(o => o !== ''));
-            
-            // Copy selection
-            const selectedValues = Array.from(source.selectedOptions).map(o => o.value);
-            Array.from(target.options).forEach(option => {
-                option.selected = selectedValues.includes(option.value);
-            });
-        }
-    });
-}
-
 // Helper function to get ISO week number
 function getWeekNumber(date) {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -2650,6 +3438,21 @@ function aggregateByTimePeriod(filteredData, granularity) {
                 }
             }
             if (!categoryKey) categoryKey = 'Unassigned';
+        } else if (state.currentReportType === 'workType') {
+            // Priority: override > CSV data > person role mapping
+            if (row._overrides?.workType) {
+                categoryKey = row._overrides.workType;
+            } else if (row['Work Type']) {
+                categoryKey = row['Work Type'];
+            } else {
+                for (const [personKey, data] of Object.entries(state.people)) {
+                    if (fullName && fullName.includes(personKey)) {
+                        categoryKey = state.roleWorkType[data.role] || 'Unassigned';
+                        break;
+                    }
+                }
+                if (!categoryKey) categoryKey = 'Unassigned';
+            }
         } else if (state.currentReportType === 'activity') {
             categoryKey = row['Activity Name'] || 'Unknown';
         } else if (state.currentReportType === 'status') {
@@ -2703,6 +3506,8 @@ function generateReport() {
         teamsNot: document.getElementById('report-team-filter-not')?.checked || false,
         roles: getSelectedValues('report-role-filter'),
         rolesNot: document.getElementById('report-role-filter-not')?.checked || false,
+        workTypes: getSelectedValues('report-work-type-filter'),
+        workTypesNot: document.getElementById('report-work-type-filter-not')?.checked || false,
         people: getSelectedValues('report-person-filter'),
         peopleNot: document.getElementById('report-person-filter-not')?.checked || false,
         activities: getSelectedValues('report-activity-filter'),
@@ -2733,11 +3538,15 @@ function generateReport() {
             }
         }
         
-        // Get actual team and project with priority order:
+        // Get actual team, work type, and project with priority order:
         // 1. Override (manual edit)
-        // 2. CSV data (Team/Project columns)
+        // 2. CSV data (Team/Work Type/Project columns)
         // 3. Person mapping (fallback)
         let actualTeam = row._overrides?.team || row.Team || personData?.team;
+        let actualWorkType = row._overrides?.workType || row['Work Type'];
+        if (!actualWorkType && personData?.role) {
+            actualWorkType = state.roleWorkType[personData.role];
+        }
         let actualProject = row._overrides?.project || row.Project || personData?.project;
         
         // Apply filters with NOT logic
@@ -2752,6 +3561,10 @@ function generateReport() {
         if (filters.roles.length && personData) {
             const isInList = filters.roles.includes(personData.role);
             if (filters.rolesNot ? isInList : !isInList) return false;
+        }
+        if (filters.workTypes.length) {
+            const isInList = filters.workTypes.includes(actualWorkType);
+            if (filters.workTypesNot ? isInList : !isInList) return false;
         }
         if (filters.people.length && personData) {
             const isInList = filters.people.includes(personData.name);
@@ -2859,6 +3672,21 @@ function generateReport() {
                 }
             }
             if (!key) key = 'Unassigned';
+        } else if (state.currentReportType === 'workType') {
+            // Priority: override > CSV data > person role mapping
+            if (row._overrides?.workType) {
+                key = row._overrides.workType;
+            } else if (row['Work Type']) {
+                key = row['Work Type'];
+            } else {
+                for (const [personKey, data] of Object.entries(state.people)) {
+                    if (fullName && fullName.includes(personKey)) {
+                        key = state.roleWorkType[data.role] || 'Unassigned';
+                        break;
+                    }
+                }
+                if (!key) key = 'Unassigned';
+            }
         } else if (state.currentReportType === 'activity') {
             key = row['Activity Name'] || 'Unknown';
         } else if (state.currentReportType === 'status') {
@@ -2977,8 +3805,9 @@ function renderChart() {
                     },
                     formatter: function(value, context) {
                         const label = context.chart.data.labels[context.dataIndex];
+                        const displayValue = convertValue(value);
                         const percentage = ((value / total) * 100).toFixed(1);
-                        return `${label}\n${value.toFixed(1)}h (${percentage}%)`;
+                        return `${label}\n${formatNumber(displayValue)}${getUnitAbbreviation()} (${percentage}%)`;
                     },
                     anchor: 'end',
                     align: 'end',
@@ -2994,9 +3823,10 @@ function renderChart() {
                         label: function(context) {
                             const label = context.label || '';
                             const value = context.parsed || 0;
+                            const displayValue = convertValue(value);
                             const total = context.dataset.data.reduce((a, b) => a + b, 0);
                             const percentage = ((value / total) * 100).toFixed(1);
-                            return `${label}: ${value.toFixed(1)}h (${percentage}%)`;
+                            return `${label}: ${formatNumber(displayValue)} ${getUnitLabel()} (${percentage}%)`;
                         }
                     },
                     bodyFont: {
@@ -3016,13 +3846,14 @@ function renderChart() {
                 const centerX = (chart.chartArea.left + chart.chartArea.right) / 2;
                 const centerY = (chart.chartArea.top + chart.chartArea.bottom) / 2;
                 const total = chart.data.datasets[0].data.reduce((sum, val) => sum + val, 0);
+                const displayTotal = convertValue(total);
                 
                 ctx.save();
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.font = `bold ${state.chartFontSize + 4}px ${state.chartFontFamily}`;
                 ctx.fillStyle = '#1f2937';
-                ctx.fillText(`${total.toFixed(1)}h`, centerX, centerY);
+                ctx.fillText(`${formatNumber(displayTotal)}${getUnitAbbreviation()}`, centerX, centerY);
                 ctx.restore();
             }
         }]
@@ -3131,7 +3962,7 @@ function renderTimeSeriesChart() {
                     beginAtZero: true,
                     title: {
                         display: true,
-                        text: 'Hours',
+                        text: getUnitLabel(),
                         font: {
                             family: state.chartFontFamily,
                             size: state.chartFontSize + 2,
@@ -3142,6 +3973,9 @@ function renderTimeSeriesChart() {
                         font: {
                             family: state.chartFontFamily,
                             size: state.chartFontSize
+                        },
+                        callback: function(value) {
+                            return formatNumber(convertValue(value));
                         }
                     }
                 }
@@ -3164,14 +3998,16 @@ function renderTimeSeriesChart() {
                         label: function(context) {
                             const label = context.dataset.label || '';
                             const value = context.parsed.y || 0;
-                            return `${label}: ${value.toFixed(1)}h`;
+                            const displayValue = convertValue(value);
+                            return `${label}: ${formatNumber(displayValue)}${getUnitAbbreviation()}`;
                         },
                         footer: function(tooltipItems) {
                             let sum = 0;
                             tooltipItems.forEach(item => {
                                 sum += item.parsed.y;
                             });
-                            return `Total: ${sum.toFixed(1)}h`;
+                            const displaySum = convertValue(sum);
+                            return `Total: ${formatNumber(displaySum)}${getUnitAbbreviation()}`;
                         }
                     },
                     bodyFont: {

@@ -3151,15 +3151,52 @@ function exportFilteredDataCSV() {
         return;
     }
     
-    // Prepare headers (use first row to get all keys, exclude _overrides, Team, Work Type, and Project)
-    const headers = Object.keys(state.filteredData[0]).filter(h => 
-        h !== '_overrides' && h !== 'Team' && h !== 'Work Type' && h !== 'Project'
-    );
+    // Get all original columns from the first row
+    const allOriginalHeaders = Object.keys(state.filteredData[0]).filter(h => h !== '_overrides');
+    
+    // Determine actual team, work type, and project for each row
+    const processedData = state.filteredData.map(row => {
+        const fullName = row['Full name'];
+        let personData = null;
+        
+        if (fullName) {
+            for (const [personKey, data] of Object.entries(state.people)) {
+                if (fullName.includes(personKey)) {
+                    personData = { ...data, name: personKey };
+                    break;
+                }
+            }
+        }
+        
+        // Priority: override > CSV data > person mapping
+        const actualTeam = row._overrides?.team || row.Team || personData?.team || '';
+        const actualProject = row._overrides?.project || row.Project || personData?.project || '';
+        let actualWorkType = row._overrides?.workType || row['Work Type'];
+        if (!actualWorkType && personData?.role) {
+            actualWorkType = state.roleWorkType[personData.role] || '';
+        } else if (!actualWorkType) {
+            actualWorkType = '';
+        }
+        
+        // Create new row with actual values
+        return {
+            ...row,
+            Team: actualTeam,
+            'Work Type': actualWorkType,
+            Project: actualProject
+        };
+    });
+    
+    // Ensure Team, Work Type, Project are in headers (add if missing)
+    const headers = [...allOriginalHeaders];
+    if (!headers.includes('Team')) headers.push('Team');
+    if (!headers.includes('Work Type')) headers.push('Work Type');
+    if (!headers.includes('Project')) headers.push('Project');
     
     // Build CSV
     let csv = headers.map(h => `"${h}"`).join(',') + '\n';
     
-    state.filteredData.forEach(row => {
+    processedData.forEach(row => {
         const values = headers.map(h => {
             const value = row[h] || '';
             return `"${String(value).replace(/"/g, '""')}"`;

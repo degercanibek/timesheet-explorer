@@ -859,6 +859,7 @@ function renderMappingTab() {
     renderWorkTypes();
     renderPeople();
     updatePeopleFilters();
+    populateMappingFilters(); // Update filters after rendering
 }
 
 // Populate filters with mapping data (Projects, Teams, Roles, Work Types)

@@ -451,6 +451,10 @@ function setupEventListeners() {
         if (state.chart) {
             generateReport();
         }
+        // Update data point details modal if open
+        if (dataPointDetailsState.originalData.length > 0) {
+            updateDataPointStatistics();
+        }
     });
     
     // Import/Export buttons (Teams & People tab)
@@ -4119,6 +4123,7 @@ function renderReportDataList() {
                 <span class="report-data-item-value">${formatNumber(displayValue)}${unitAbbr} (${percentage}%)</span>
             </div>
             <div class="report-data-item-actions">
+                <button class="btn-icon detail-view" data-index="${index}" title="View details">ℹ️</button>
                 <button class="btn-icon label-edit" data-index="${index}" title="Edit label">✏️</button>
                 <button class="btn-icon visibility-toggle" data-index="${index}" title="${visibilityTitle}">${visibilityIcon}</button>
                 <div class="report-data-item-drag">⋮⋮</div>
@@ -4130,6 +4135,13 @@ function renderReportDataList() {
         colorPicker.addEventListener('change', (e) => {
             e.stopPropagation();
             changeCategoryColor(item.label, e.target.value);
+        });
+        
+        // Add detail view handler
+        const detailBtn = dataItem.querySelector('.detail-view');
+        detailBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openDataPointDetails(index);
         });
         
         // Add visibility toggle handler
@@ -4406,6 +4418,624 @@ function exportSkippedRows() {
     
     alert(`Exported ${skippedRows.length} skipped rows to CSV`);
 }
+
+// ============================================
+// DATA POINT DETAILS MODAL
+// ============================================
+
+// State for data point details
+let dataPointDetailsState = {
+    originalData: [],
+    filteredData: [],
+    currentDataPoint: null,
+    currentPage: 1,
+    rowsPerPage: 50
+};
+
+function openDataPointDetails(dataPointIndex) {
+    const dataPoint = state.reportData[dataPointIndex];
+    if (!dataPoint) return;
+    
+    // Store current data point
+    dataPointDetailsState.currentDataPoint = dataPoint;
+    
+    // Get all timesheet data that matches this data point
+    const reportType = state.currentReportType;
+    const category = dataPoint.label;
+    
+    // Apply same filters as the report
+    const filters = {
+        projects: getSelectedValues('report-project-filter'),
+        projectsNot: document.getElementById('report-project-filter-not')?.checked || false,
+        teams: getSelectedValues('report-team-filter'),
+        teamsNot: document.getElementById('report-team-filter-not')?.checked || false,
+        roles: getSelectedValues('report-role-filter'),
+        rolesNot: document.getElementById('report-role-filter-not')?.checked || false,
+        workTypes: getSelectedValues('report-work-type-filter'),
+        workTypesNot: document.getElementById('report-work-type-filter-not')?.checked || false,
+        people: getSelectedValues('report-person-filter'),
+        peopleNot: document.getElementById('report-person-filter-not')?.checked || false,
+        activities: getSelectedValues('report-activity-filter'),
+        activitiesNot: document.getElementById('report-activity-filter-not')?.checked || false,
+        statuses: getSelectedValues('report-issue-status-filter'),
+        statusesNot: document.getElementById('report-issue-status-filter-not')?.checked || false,
+        projectKeys: getSelectedValues('report-project-key-filter'),
+        projectKeysNot: document.getElementById('report-project-key-filter-not')?.checked || false,
+        servisValues: getSelectedValues('report-servis-filter'),
+        servisValuesNot: document.getElementById('report-servis-filter-not')?.checked || false,
+        issueSummary: document.getElementById('report-issue-summary-filter')?.value.toLowerCase(),
+        issueSummaryNot: document.getElementById('report-issue-summary-not')?.checked || false,
+        workDateStart: document.getElementById('report-work-date-start')?.value || '',
+        workDateEnd: document.getElementById('report-work-date-end')?.value || ''
+    };
+    
+    // Filter and match records for this data point
+    const matchingRecords = state.timesheetData.filter(row => {
+        const fullName = row['Full name'];
+        let personData = null;
+        
+        if (fullName) {
+            for (const [personKey, data] of Object.entries(state.people)) {
+                if (fullName.includes(personKey)) {
+                    personData = { ...data, name: personKey };
+                    break;
+                }
+            }
+        }
+        
+        let actualTeam = row._overrides?.team || row.Team || personData?.team;
+        let actualWorkType = row._overrides?.workType || row['Work Type'];
+        if (!actualWorkType && personData?.role) {
+            actualWorkType = state.roleWorkType[personData.role];
+        }
+        let actualProject = row._overrides?.project || row.Project || personData?.project;
+        
+        // Apply global filters first
+        if (filters.projects.length) {
+            const isInList = filters.projects.includes(actualProject);
+            if (filters.projectsNot ? isInList : !isInList) return false;
+        }
+        if (filters.teams.length) {
+            const isInList = filters.teams.includes(actualTeam);
+            if (filters.teamsNot ? isInList : !isInList) return false;
+        }
+        if (filters.roles.length && personData) {
+            const isInList = filters.roles.includes(personData.role);
+            if (filters.rolesNot ? isInList : !isInList) return false;
+        }
+        if (filters.workTypes.length) {
+            const isInList = filters.workTypes.includes(actualWorkType);
+            if (filters.workTypesNot ? isInList : !isInList) return false;
+        }
+        if (filters.people.length && personData) {
+            const isInList = filters.people.includes(personData.name);
+            if (filters.peopleNot ? isInList : !isInList) return false;
+        }
+        if (filters.activities.length) {
+            const isInList = filters.activities.includes(row['Activity Name']);
+            if (filters.activitiesNot ? isInList : !isInList) return false;
+        }
+        if (filters.statuses.length) {
+            const isInList = filters.statuses.includes(row['Issue Status']);
+            if (filters.statusesNot ? isInList : !isInList) return false;
+        }
+        if (filters.projectKeys.length) {
+            const isInList = filters.projectKeys.includes(row['Project Key']);
+            if (filters.projectKeysNot ? isInList : !isInList) return false;
+        }
+        if (filters.servisValues.length) {
+            const isInList = filters.servisValues.includes(row['Servis']);
+            if (filters.servisValuesNot ? isInList : !isInList) return false;
+        }
+        if (filters.workDateStart || filters.workDateEnd) {
+            const workDate = row['Work date'];
+            if (workDate) {
+                const datePart = workDate.split(' ')[0];
+                if (filters.workDateStart && datePart < filters.workDateStart) return false;
+                if (filters.workDateEnd && datePart > filters.workDateEnd) return false;
+            } else {
+                return false;
+            }
+        }
+        if (filters.issueSummary) {
+            const summary = row['Issue summary']?.toLowerCase() || '';
+            const matches = summary.includes(filters.issueSummary);
+            if (filters.issueSummaryNot) {
+                if (matches) return false;
+            } else {
+                if (!matches) return false;
+            }
+        }
+        
+        // Now check if this record matches the selected data point
+        let recordKey;
+        if (reportType === 'person') {
+            recordKey = personData?.name || fullName || 'Unknown';
+        } else if (reportType === 'team') {
+            recordKey = actualTeam || 'Unassigned';
+        } else if (reportType === 'project') {
+            recordKey = actualProject || 'Unassigned';
+        } else if (reportType === 'role') {
+            recordKey = personData?.role || 'Unassigned';
+        } else if (reportType === 'workType') {
+            recordKey = actualWorkType || 'Unassigned';
+        } else if (reportType === 'activity') {
+            recordKey = row['Activity Name'] || 'Unassigned';
+        } else if (reportType === 'projectKey') {
+            recordKey = row['Project Key'] || 'Unassigned';
+        } else if (reportType === 'issueStatus') {
+            recordKey = row['Issue Status'] || 'Unassigned';
+        } else if (reportType === 'servis') {
+            const servisNum = row['Servis'];
+            if (servisNum && state.servisMapping[servisNum]) {
+                recordKey = `${servisNum} - ${state.servisMapping[servisNum]}`;
+            } else {
+                recordKey = servisNum || 'Unassigned';
+            }
+        }
+        
+        return recordKey === category;
+    });
+    
+    // Store original data
+    dataPointDetailsState.originalData = matchingRecords;
+    dataPointDetailsState.filteredData = matchingRecords;
+    dataPointDetailsState.currentPage = 1;
+    
+    // Store data point and date filters for title update
+    dataPointDetailsState.currentDataPoint = dataPoint;
+    dataPointDetailsState.globalDateStart = filters.workDateStart;
+    dataPointDetailsState.globalDateEnd = filters.workDateEnd;
+    
+    // Populate filters with unique values from this data point's records
+    populateDataPointFilters();
+    
+    // Calculate and display statistics
+    updateDataPointStatistics();
+    
+    // Render the table
+    renderDataPointTable();
+    
+    // Show modal
+    const modal = document.getElementById('datapoint-details-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+    }
+}
+
+function populateDataPointFilters() {
+    const data = dataPointDetailsState.originalData;
+    
+    // Get unique values
+    const projects = new Set();
+    const teams = new Set();
+    const roles = new Set();
+    const workTypes = new Set();
+    const people = new Set();
+    
+    data.forEach(row => {
+        const fullName = row['Full name'];
+        let personData = null;
+        
+        if (fullName) {
+            for (const [personKey, pd] of Object.entries(state.people)) {
+                if (fullName.includes(personKey)) {
+                    personData = { ...pd, name: personKey };
+                    break;
+                }
+            }
+        }
+        
+        const actualTeam = row._overrides?.team || row.Team || personData?.team;
+        const actualWorkType = row._overrides?.workType || row['Work Type'] || (personData?.role ? state.roleWorkType[personData.role] : null);
+        const actualProject = row._overrides?.project || row.Project || personData?.project;
+        
+        if (actualProject) projects.add(actualProject);
+        if (actualTeam) teams.add(actualTeam);
+        if (personData?.role) roles.add(personData.role);
+        if (actualWorkType) workTypes.add(actualWorkType);
+        if (personData?.name) people.add(personData.name);
+    });
+    
+    // Populate select elements
+    populateSelect('datapoint-filter-project', Array.from(projects).sort());
+    populateSelect('datapoint-filter-team', Array.from(teams).sort());
+    populateSelect('datapoint-filter-role', Array.from(roles).sort());
+    populateSelect('datapoint-filter-worktype', Array.from(workTypes).sort());
+    populateSelect('datapoint-filter-person', Array.from(people).sort());
+}
+
+function populateSelect(selectId, values) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    
+    // Keep "All" option, clear others
+    select.innerHTML = '<option value="">All ' + selectId.split('-').pop().charAt(0).toUpperCase() + selectId.split('-').pop().slice(1) + 's</option>';
+    
+    values.forEach(value => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+    });
+}
+
+function updateDataPointStatistics() {
+    const data = dataPointDetailsState.filteredData;
+    
+    // Calculate statistics
+    const totalRecords = data.length;
+    const uniquePeople = new Set();
+    let totalHours = 0;
+    const dates = [];
+    
+    data.forEach(row => {
+        const fullName = row['Full name'];
+        if (fullName) {
+            for (const personKey of Object.keys(state.people)) {
+                if (fullName.includes(personKey)) {
+                    uniquePeople.add(personKey);
+                    break;
+                }
+            }
+        }
+        
+        const hours = parseFloat(row.Hours) || 0;
+        totalHours += hours;
+        
+        const workDate = row['Work date'];
+        if (workDate) {
+            const datePart = workDate.split(' ')[0];
+            dates.push(datePart);
+        }
+    });
+    
+    // Update UI
+    document.getElementById('datapoint-stat-records').textContent = totalRecords.toLocaleString();
+    document.getElementById('datapoint-stat-people').textContent = uniquePeople.size.toLocaleString();
+    
+    const displayValue = convertValue(totalHours);
+    const unitLabel = getUnitLabel();
+    const hoursLabel = document.getElementById('datapoint-stat-hours-label');
+    if (hoursLabel) {
+        hoursLabel.textContent = `Total ${unitLabel}`;
+    }
+    document.getElementById('datapoint-stat-hours').textContent = formatNumber(displayValue);
+    
+    // Update title with global date range filter
+    const title = document.getElementById('datapoint-details-title');
+    const dataPoint = dataPointDetailsState.currentDataPoint;
+    if (title && dataPoint) {
+        const labelText = escapeHtml(dataPoint.displayLabel || dataPoint.label);
+        
+        // Use global date filters instead of data range
+        const dateStart = dataPointDetailsState.globalDateStart;
+        const dateEnd = dataPointDetailsState.globalDateEnd;
+        
+        if (dateStart || dateEnd) {
+            let dateRangeText = '';
+            if (dateStart && dateEnd) {
+                dateRangeText = dateStart === dateEnd ? dateStart : `${dateStart} / ${dateEnd}`;
+            } else if (dateStart) {
+                dateRangeText = `From ${dateStart}`;
+            } else if (dateEnd) {
+                dateRangeText = `Until ${dateEnd}`;
+            }
+            title.innerHTML = `Details: ${labelText} <span style="font-size: 0.75em; color: var(--text-secondary); font-weight: 400; margin-left: 8px;">- ${dateRangeText}</span>`;
+        } else {
+            title.textContent = `Details: ${labelText}`;
+        }
+    }
+}
+
+function applyDataPointFilters() {
+    const selectedProject = document.getElementById('datapoint-filter-project')?.value;
+    const selectedTeam = document.getElementById('datapoint-filter-team')?.value;
+    const selectedRole = document.getElementById('datapoint-filter-role')?.value;
+    const selectedWorkType = document.getElementById('datapoint-filter-worktype')?.value;
+    const selectedPerson = document.getElementById('datapoint-filter-person')?.value;
+    
+    dataPointDetailsState.filteredData = dataPointDetailsState.originalData.filter(row => {
+        const fullName = row['Full name'];
+        let personData = null;
+        
+        if (fullName) {
+            for (const [personKey, data] of Object.entries(state.people)) {
+                if (fullName.includes(personKey)) {
+                    personData = { ...data, name: personKey };
+                    break;
+                }
+            }
+        }
+        
+        const actualTeam = row._overrides?.team || row.Team || personData?.team;
+        const actualWorkType = row._overrides?.workType || row['Work Type'] || (personData?.role ? state.roleWorkType[personData.role] : null);
+        const actualProject = row._overrides?.project || row.Project || personData?.project;
+        
+        if (selectedProject && actualProject !== selectedProject) return false;
+        if (selectedTeam && actualTeam !== selectedTeam) return false;
+        if (selectedRole && personData?.role !== selectedRole) return false;
+        if (selectedWorkType && actualWorkType !== selectedWorkType) return false;
+        if (selectedPerson && personData?.name !== selectedPerson) return false;
+        
+        return true;
+    });
+    
+    dataPointDetailsState.currentPage = 1;
+    updateDataPointStatistics();
+    renderDataPointTable();
+}
+
+function clearDataPointFilters() {
+    document.getElementById('datapoint-filter-project').value = '';
+    document.getElementById('datapoint-filter-team').value = '';
+    document.getElementById('datapoint-filter-role').value = '';
+    document.getElementById('datapoint-filter-worktype').value = '';
+    document.getElementById('datapoint-filter-person').value = '';
+    
+    applyDataPointFilters();
+}
+
+function renderDataPointTable() {
+    const tbody = document.getElementById('datapoint-details-tbody');
+    if (!tbody) return;
+    
+    const data = dataPointDetailsState.filteredData;
+    const page = dataPointDetailsState.currentPage;
+    const rowsPerPage = dataPointDetailsState.rowsPerPage;
+    
+    if (data.length === 0) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No records match the filters</td></tr>';
+        document.getElementById('datapoint-pagination').style.display = 'none';
+        return;
+    }
+    
+    // Calculate pagination
+    const totalPages = Math.ceil(data.length / rowsPerPage);
+    const startIdx = (page - 1) * rowsPerPage;
+    const endIdx = Math.min(startIdx + rowsPerPage, data.length);
+    const pageData = data.slice(startIdx, endIdx);
+    
+    // Render rows
+    tbody.innerHTML = '';
+    pageData.forEach(row => {
+        const fullName = row['Full name'];
+        let personData = null;
+        
+        if (fullName) {
+            for (const [personKey, data] of Object.entries(state.people)) {
+                if (fullName.includes(personKey)) {
+                    personData = { ...data, name: personKey };
+                    break;
+                }
+            }
+        }
+        
+        const actualTeam = row._overrides?.team || row.Team || personData?.team || '';
+        const actualWorkType = row._overrides?.workType || row['Work Type'] || (personData?.role ? state.roleWorkType[personData.role] : '') || '';
+        const actualProject = row._overrides?.project || row.Project || personData?.project || '';
+        const actualRole = personData?.role || '';
+        
+        const tr = document.createElement('tr');
+        
+        const workDate = row['Work date'] ? row['Work date'].split(' ')[0] : '';
+        const hours = parseFloat(row.Hours) || 0;
+        
+        tr.innerHTML = `
+            <td>${escapeHtml(workDate)}</td>
+            <td>${escapeHtml(personData?.name || fullName || '')}</td>
+            <td>${escapeHtml(actualProject)}</td>
+            <td>${escapeHtml(actualTeam)}</td>
+            <td>${escapeHtml(actualRole)}</td>
+            <td>${escapeHtml(actualWorkType)}</td>
+            <td>${hours.toFixed(2)}</td>
+            <td>${escapeHtml(row['Issue summary'] || '')}</td>
+        `;
+        
+        tbody.appendChild(tr);
+    });
+    
+    // Render pagination
+    renderDataPointPagination(totalPages);
+}
+
+function renderDataPointPagination(totalPages) {
+    const paginationDiv = document.getElementById('datapoint-pagination');
+    if (!paginationDiv || totalPages <= 1) {
+        paginationDiv.style.display = 'none';
+        return;
+    }
+    
+    paginationDiv.style.display = 'flex';
+    paginationDiv.innerHTML = '';
+    
+    const currentPage = dataPointDetailsState.currentPage;
+    const data = dataPointDetailsState.filteredData;
+    const rowsPerPage = dataPointDetailsState.rowsPerPage;
+    const startIdx = (currentPage - 1) * rowsPerPage + 1;
+    const endIdx = Math.min(currentPage * rowsPerPage, data.length);
+    
+    // Create wrapper for controls
+    const wrapper = document.createElement('div');
+    wrapper.className = 'pagination-wrapper';
+    
+    // Previous button
+    const prevBtn = document.createElement('button');
+    prevBtn.textContent = '←';
+    prevBtn.className = 'pagination-btn';
+    prevBtn.disabled = currentPage === 1;
+    prevBtn.onclick = () => {
+        if (currentPage > 1) {
+            dataPointDetailsState.currentPage--;
+            renderDataPointTable();
+        }
+    };
+    wrapper.appendChild(prevBtn);
+    
+    // Page numbers container
+    const pageNumbers = document.createElement('div');
+    pageNumbers.className = 'page-numbers';
+    
+    // Calculate which page numbers to show
+    let startPage = Math.max(1, currentPage - 2);
+    let endPage = Math.min(totalPages, currentPage + 2);
+    
+    // Always show first page
+    if (startPage > 1) {
+        const firstBtn = createPageButton(1, currentPage === 1);
+        pageNumbers.appendChild(firstBtn);
+        if (startPage > 2) {
+            const ellipsis = document.createElement('span');
+            ellipsis.className = 'pagination-ellipsis';
+            ellipsis.textContent = '...';
+            pageNumbers.appendChild(ellipsis);
+        }
+    }
+    
+    // Show page range
+    for (let i = startPage; i <= endPage; i++) {
+        const btn = createPageButton(i, i === currentPage);
+        pageNumbers.appendChild(btn);
+    }
+    
+    // Always show last page
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            const ellipsis = document.createElement('span');
+            ellipsis.className = 'pagination-ellipsis';
+            ellipsis.textContent = '...';
+            pageNumbers.appendChild(ellipsis);
+        }
+        const lastBtn = createPageButton(totalPages, currentPage === totalPages);
+        pageNumbers.appendChild(lastBtn);
+    }
+    
+    wrapper.appendChild(pageNumbers);
+    
+    // Next button
+    const nextBtn = document.createElement('button');
+    nextBtn.textContent = '→';
+    nextBtn.className = 'pagination-btn';
+    nextBtn.disabled = currentPage === totalPages;
+    nextBtn.onclick = () => {
+        if (currentPage < totalPages) {
+            dataPointDetailsState.currentPage++;
+            renderDataPointTable();
+        }
+    };
+    wrapper.appendChild(nextBtn);
+    
+    paginationDiv.appendChild(wrapper);
+    
+    // Add info text
+    const info = document.createElement('span');
+    info.className = 'pagination-info';
+    info.textContent = `Showing ${startIdx}-${endIdx} of ${data.length} records`;
+    paginationDiv.appendChild(info);
+}
+
+function createPageButton(pageNum, isActive) {
+    const btn = document.createElement('button');
+    btn.textContent = pageNum;
+    btn.className = 'pagination-btn' + (isActive ? ' active' : '');
+    if (!isActive) {
+        btn.onclick = () => {
+            dataPointDetailsState.currentPage = pageNum;
+            renderDataPointTable();
+        };
+    }
+    return btn;
+}
+
+function exportDataPointCSV() {
+    const data = dataPointDetailsState.filteredData;
+    
+    if (data.length === 0) {
+        alert('No data to export');
+        return;
+    }
+    
+    // CSV header
+    let csv = 'Work Date,Person,Project,Team,Role,Work Type,Hours,Description\n';
+    
+    data.forEach(row => {
+        const fullName = row['Full name'];
+        let personData = null;
+        
+        if (fullName) {
+            for (const [personKey, pd] of Object.entries(state.people)) {
+                if (fullName.includes(personKey)) {
+                    personData = { ...pd, name: personKey };
+                    break;
+                }
+            }
+        }
+        
+        const actualTeam = row._overrides?.team || row.Team || personData?.team || '';
+        const actualWorkType = row._overrides?.workType || row['Work Type'] || (personData?.role ? state.roleWorkType[personData.role] : '') || '';
+        const actualProject = row._overrides?.project || row.Project || personData?.project || '';
+        const actualRole = personData?.role || '';
+        
+        const workDate = row['Work date'] ? row['Work date'].split(' ')[0] : '';
+        const hours = parseFloat(row.Hours) || 0;
+        const description = (row['Issue summary'] || '').replace(/"/g, '""');
+        const person = (personData?.name || fullName || '').replace(/"/g, '""');
+        
+        csv += `${workDate},"${person}","${actualProject}","${actualTeam}","${actualRole}","${actualWorkType}",${hours.toFixed(2)},"${description}"\n`;
+    });
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const category = dataPointDetailsState.currentDataPoint?.label || 'datapoint';
+    a.download = `${category.replace(/[^a-z0-9]/gi, '_')}-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function closeDataPointModal() {
+    const modal = document.getElementById('datapoint-details-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+    
+    // Reset state
+    dataPointDetailsState = {
+        originalData: [],
+        filteredData: [],
+        currentDataPoint: null,
+        currentPage: 1,
+        rowsPerPage: 50
+    };
+}
+
+// Event listeners for data point modal
+document.addEventListener('DOMContentLoaded', () => {
+    // Close buttons
+    document.getElementById('datapoint-details-close')?.addEventListener('click', closeDataPointModal);
+    document.getElementById('datapoint-details-close-btn')?.addEventListener('click', closeDataPointModal);
+    
+    // Filter changes
+    document.getElementById('datapoint-filter-project')?.addEventListener('change', applyDataPointFilters);
+    document.getElementById('datapoint-filter-team')?.addEventListener('change', applyDataPointFilters);
+    document.getElementById('datapoint-filter-role')?.addEventListener('change', applyDataPointFilters);
+    document.getElementById('datapoint-filter-worktype')?.addEventListener('change', applyDataPointFilters);
+    document.getElementById('datapoint-filter-person')?.addEventListener('change', applyDataPointFilters);
+    
+    // Clear filters
+    document.getElementById('datapoint-clear-filters')?.addEventListener('click', clearDataPointFilters);
+    
+    // Export CSV
+    document.getElementById('datapoint-export-csv')?.addEventListener('click', exportDataPointCSV);
+    
+    // Close on backdrop click
+    document.getElementById('datapoint-details-modal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'datapoint-details-modal') {
+            closeDataPointModal();
+        }
+    });
+});
 
 // ============================================
 // EXPOSE FUNCTIONS TO GLOBAL SCOPE

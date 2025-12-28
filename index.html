@@ -937,6 +937,103 @@
         </div>
     </div>
 
+    <!-- Data Point Details Modal -->
+    <div id="datapoint-details-modal" class="modal">
+        <div class="modal-content" style="max-width: 95%; max-height: 90vh;">
+            <div class="modal-header">
+                <h2 id="datapoint-details-title">Data Point Details</h2>
+                <button class="modal-close" id="datapoint-details-close">&times;</button>
+            </div>
+            <div class="modal-body" style="overflow-y: auto; max-height: calc(90vh - 140px);">
+                <!-- Statistics Summary -->
+                <div class="data-summary" style="margin-bottom: 20px;">
+                    <div class="summary-item">
+                        <span class="summary-label">Total Records</span>
+                        <span class="summary-value" id="datapoint-stat-records">-</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">Unique People</span>
+                        <span class="summary-value" id="datapoint-stat-people">-</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label" id="datapoint-stat-hours-label">Total Hours</span>
+                        <span class="summary-value" id="datapoint-stat-hours">-</span>
+                    </div>
+                </div>
+
+                <!-- Filters -->
+                <div style="margin-bottom: 20px; padding: 16px; background: var(--background); border-radius: var(--border-radius); border: 1px solid var(--border-color);">
+                    <h3 style="margin: 0 0 16px 0; font-size: 14px; font-weight: 600; color: var(--text-primary);">Filters</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 16px;">
+                        <div class="form-group">
+                            <label for="datapoint-filter-project">Project</label>
+                            <select id="datapoint-filter-project" class="select">
+                                <option value="">All Projects</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="datapoint-filter-team">Team</label>
+                            <select id="datapoint-filter-team" class="select">
+                                <option value="">All Teams</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="datapoint-filter-role">Role</label>
+                            <select id="datapoint-filter-role" class="select">
+                                <option value="">All Roles</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="datapoint-filter-worktype">Work Type</label>
+                            <select id="datapoint-filter-worktype" class="select">
+                                <option value="">All Work Types</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="datapoint-filter-person">Person</label>
+                            <select id="datapoint-filter-person" class="select">
+                                <option value="">All People</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                        <button id="datapoint-clear-filters" class="btn btn-secondary btn-sm">Clear Filters</button>
+                        <button id="datapoint-export-csv" class="btn btn-secondary btn-sm">📥 Export CSV</button>
+                    </div>
+                </div>
+
+                <!-- Data Table -->
+                <div class="table-container">
+                    <table id="datapoint-details-table" class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Work Date</th>
+                                <th>Person</th>
+                                <th>Project</th>
+                                <th>Team</th>
+                                <th>Role</th>
+                                <th>Work Type</th>
+                                <th>Hours</th>
+                                <th>Description</th>
+                            </tr>
+                        </thead>
+                        <tbody id="datapoint-details-tbody">
+                            <tr class="empty-row">
+                                <td colspan="8">No records to display</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Pagination -->
+                <div class="pagination" id="datapoint-pagination" style="display: none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="datapoint-details-close-btn" class="btn btn-secondary">Close</button>
+            </div>
+        </div>
+    </div>
+
     <script src="script.js"></script>
 </body>
 </html>

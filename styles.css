@@ -1002,19 +1002,23 @@ input:checked + .slider:before {
     gap: 4px;
     align-items: center;
     text-align: center;
-    min-width: 100px;
+    min-width: 120px;
+    flex: 1;
 }
 
 .summary-label {
     font-size: 0.8rem;
     color: var(--text-secondary);
     letter-spacing: 0.3px;
+    white-space: nowrap;
 }
 
 .summary-value {
     font-size: 2rem;
     font-weight: 700;
     color: var(--primary-color);
+    word-break: break-word;
+    line-height: 1.2;
 }
 
 /* Data Table Specific */
@@ -1447,7 +1451,13 @@ input:checked + .slider:before {
     margin-bottom: 16px;
 }
 
-.modal-body .form-group label {
+.modal-body .form-group:last-child,
+.form-group {
+    margin-bottom: 0;
+}
+
+.modal-body .form-group label,
+.form-group label {
     display: block;
     font-weight: 500;
     margin-bottom: 6px;
@@ -1456,7 +1466,8 @@ input:checked + .slider:before {
 }
 
 .modal-body .form-group input,
-.modal-body .form-group select {
+.modal-body .form-group select,
+.form-group select {
     width: 100%;
 }
 

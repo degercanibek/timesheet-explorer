@@ -1050,7 +1050,7 @@ input:checked + .slider:before {
 
 /* Report Section */
 .report-controls {
-    margin-bottom: 16px;
+    margin-bottom: 32px;
 }
 
 .report-controls-grid {
@@ -1584,7 +1584,7 @@ input:checked + .slider:before {
 
 /* Report data list styles */
 .data-list-section {
-    margin-top: 32px;
+    margin-top: 48px;
     padding: 20px;
     background: white;
     border: 1px solid var(--border-color);

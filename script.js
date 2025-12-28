@@ -3988,8 +3988,12 @@ function renderTimeSeriesChart() {
         },
         options: {
             responsive: true,
-            maintainAspectRatio: true,
-            aspectRatio: 1.5,
+            maintainAspectRatio: false,
+            layout: {
+                padding: {
+                    top: 30
+                }
+            },
             scales: {
                 x: {
                     stacked: true,
@@ -4031,7 +4035,8 @@ function renderTimeSeriesChart() {
                         font: {
                             family: state.chartFontFamily,
                             size: state.chartFontSize
-                        }
+                        },
+                        padding: 10
                     }
                 },
                 tooltip: {

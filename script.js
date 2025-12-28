@@ -684,6 +684,7 @@ function setupEventListeners() {
     document.getElementById('theme-select').addEventListener('change', () => {
         if (state.reportData.length > 0) {
             renderChart();
+            renderReportDataList(); // Also update data list colors
         }
     });
     document.getElementById('font-family-select').addEventListener('change', (e) => {
@@ -4107,13 +4108,15 @@ function renderReportDataList() {
         
         const visibilityIcon = item.visible === false ? '👁️' : '👁️‍🗨️';
         const visibilityTitle = item.visible === false ? 'Show in chart' : 'Hide from chart';
+        const displayValue = convertValue(item.value);
+        const unitAbbr = getUnitAbbreviation();
         
         dataItem.innerHTML = `
             <div class="report-data-item-content">
                 <input type="color" class="color-picker" data-index="${index}" value="${currentColor}" title="Change color">
                 <span class="report-data-item-number">${index + 1}.</span>
                 <span class="report-data-item-label">${escapeHtml(item.displayLabel || item.label)}</span>
-                <span class="report-data-item-value">${item.value.toFixed(1)}h (${percentage}%)</span>
+                <span class="report-data-item-value">${formatNumber(displayValue)}${unitAbbr} (${percentage}%)</span>
             </div>
             <div class="report-data-item-actions">
                 <button class="btn-icon label-edit" data-index="${index}" title="Edit label">✏️</button>

@@ -15,6 +15,7 @@ let state = {
     roleWorkType: {}, // {roleName: "defaultWorkType"}
     people: {}, // {personName: {team, project, role}}
     servisMapping: {}, // {servisNumber: "Description"} e.g., {"5215": "General Efforts"}
+    csvFormat: 'original', // 'original' or 'new' - tracks imported CSV format
     timesheetData: [], // Array of CSV row objects
     filteredData: [], // Filtered timesheet data
     selectedRows: new Set(), // Selected row indices for batch update
@@ -66,6 +67,35 @@ let state = {
     chartFontFamily: 'Helvetica',
     chartRotation: -55
 };
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+// Get actual value with override support
+// If override exists (even if null), use it. Otherwise fall back to CSV or person mapping.
+function getActualValue(row, field, personData) {
+    // Check if override is explicitly set (even if null)
+    if (row._overrides && field in row._overrides) {
+        return row._overrides[field];
+    }
+    
+    // Fall back to CSV data or person mapping
+    if (field === 'team') {
+        return row.Team || personData?.team;
+    } else if (field === 'workType') {
+        const workType = row['Work Type'];
+        if (workType) return workType;
+        // Fall back to role mapping
+        if (personData?.role && state.roleWorkType[personData.role]) {
+            return state.roleWorkType[personData.role];
+        }
+        return null;
+    } else if (field === 'project') {
+        return row.Project || personData?.project;
+    }
+    return null;
+}
 
 // Chart color themes
 const chartThemes = {
@@ -370,6 +400,12 @@ function switchSubTab(subtab) {
 // Format number with thousand separator
 function formatNumber(num) {
     if (num === null || num === undefined || isNaN(num)) return '0';
+    
+    // For man-days, never show 0, minimum 0.1
+    if (state.currentUnit === 'mandays' && num > 0 && num < 0.1) {
+        return '0.1';
+    }
+    
     return Number(num).toLocaleString('en-US', { 
         minimumFractionDigits: 0,
         maximumFractionDigits: 1 
@@ -379,7 +415,9 @@ function formatNumber(num) {
 // Convert hours to selected unit (hours or man-days)
 function convertValue(hours) {
     if (state.currentUnit === 'mandays') {
-        return hours / 8;
+        const mandays = hours / 8;
+        // Truncate to 1 decimal place
+        return Math.floor(mandays * 10) / 10;
     }
     return hours;
 }
@@ -399,6 +437,11 @@ function getUnitLabel() {
 // Get unit abbreviation for charts
 function getUnitAbbreviation() {
     return state.currentUnit === 'mandays' ? 'md' : 'h';
+}
+
+// Truncate hours to 1 decimal place (no rounding)
+function truncateHours(hours) {
+    return Math.floor(hours * 10) / 10;
 }
 
 // Update table headers based on unit
@@ -503,7 +546,10 @@ function setupEventListeners() {
     document.getElementById('manage-servis-btn').addEventListener('click', openServisModal);
     document.getElementById('apply-filters-btn').addEventListener('click', applyFilters);
     document.getElementById('clear-filters-btn').addEventListener('click', clearFilters);
-    document.getElementById('apply-person-mapping-btn').addEventListener('click', applyPersonMapping);
+    document.getElementById('apply-person-mapping-btn').addEventListener('click', showApplyMappingModal);
+    document.getElementById('apply-mapping-modal-close')?.addEventListener('click', closeApplyMappingModal);
+    document.getElementById('apply-mapping-cancel-btn')?.addEventListener('click', closeApplyMappingModal);
+    document.getElementById('apply-mapping-execute-btn')?.addEventListener('click', executePersonMapping);
     document.getElementById('clear-report-filters-btn').addEventListener('click', clearReportFilters);
     
     // Batch update controls
@@ -718,6 +764,9 @@ function setupEventListeners() {
     // Close modal on background click
     document.getElementById('modal').addEventListener('click', (e) => {
         if (e.target.id === 'modal') closeModal();
+    });
+    document.getElementById('apply-mapping-modal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'apply-mapping-modal') closeApplyMappingModal();
     });
     
     // Event delegation for table action buttons
@@ -1205,7 +1254,7 @@ function renderPeople() {
 function calculatePersonHours(personName) {
     return state.timesheetData
         .filter(row => row['Full name'] && row['Full name'].includes(personName))
-        .reduce((sum, row) => sum + (parseFloat(row.Hours) || 0), 0);
+        .reduce((sum, row) => sum + truncateHours(parseFloat(row.Hours) || 0), 0);
 }
 
 function editPerson(personName) {
@@ -1294,6 +1343,24 @@ function renderPagination(entity, totalItems) {
     html += `<button class="pagination-btn" ${currentPage === totalPages ? 'disabled' : ''} 
              onclick="changePage('${entity}', ${currentPage + 1})">›</button>`;
     
+    // Page jump input (show only if there are many pages)
+    if (totalPages > 5) {
+        html += `
+            <div class="page-jump">
+                <span class="page-jump-label">Go to:</span>
+                <input type="number" 
+                       class="page-jump-input" 
+                       id="page-jump-${entity}"
+                       min="1" 
+                       max="${totalPages}" 
+                       placeholder="${currentPage}"
+                       onkeypress="if(event.key === 'Enter') jumpToPage('${entity}', this.value, ${totalPages})">
+                <button class="pagination-btn" 
+                        onclick="jumpToPage('${entity}', document.getElementById('page-jump-${entity}').value, ${totalPages})">Go</button>
+            </div>
+        `;
+    }
+    
     html += '</div>';
     paginationDiv.innerHTML = html;
 }
@@ -1312,6 +1379,17 @@ function changePage(entity, page) {
     else if (entity === 'workType' || entity === 'workTypes') renderWorkTypes();
     else if (entity === 'person') renderPeople();
     else if (entity === 'filteredData') renderFilteredData();
+}
+
+function jumpToPage(entity, pageNumber, totalPages) {
+    const page = parseInt(pageNumber, 10);
+    
+    // Validate page number
+    if (isNaN(page) || page < 1 || page > totalPages) {
+        return; // Invalid input, do nothing
+    }
+    
+    changePage(entity, page);
 }
 
 // ============================================
@@ -1654,14 +1732,144 @@ function importPeopleFromCSV() {
 // TIMESHEET DATA TAB (tab-data)
 // ============================================
 
-function applyPersonMapping() {
-    const overrideExisting = document.getElementById('override-existing-mapping').checked;
+function showApplyMappingModal() {
+    if (state.filteredData.length === 0) {
+        alert('No filtered data to apply mapping to. Please apply filters first.');
+        return;
+    }
+    
+    // Reset modal to defaults
+    document.getElementById('modal-apply-mapping-team').checked = true;
+    document.getElementById('modal-apply-mapping-project').checked = true;
+    document.getElementById('modal-apply-mapping-worktype').checked = true;
+    document.getElementById('modal-override-existing-mapping').checked = false;
+    
+    // Show modal
+    document.getElementById('apply-mapping-modal').style.display = 'flex';
+}
+
+function closeApplyMappingModal() {
+    document.getElementById('apply-mapping-modal').style.display = 'none';
+}
+
+function executePersonMapping() {
+    const overrideExisting = document.getElementById('modal-override-existing-mapping').checked;
+    const applyTeam = document.getElementById('modal-apply-mapping-team').checked;
+    const applyProject = document.getElementById('modal-apply-mapping-project').checked;
+    const applyWorkType = document.getElementById('modal-apply-mapping-worktype').checked;
+    
+    if (!applyTeam && !applyProject && !applyWorkType) {
+        alert('Please select at least one field to apply mapping to (Team, Project, or Work Type).');
+        return;
+    }
     
     if (state.filteredData.length === 0) {
         alert('No filtered data to apply mapping to. Please apply filters first.');
         return;
     }
     
+    // First pass: count what will be updated
+    let willUpdateCount = 0;
+    let willSkipCount = 0;
+    const updateDetails = {
+        team: 0,
+        project: 0,
+        workType: 0
+    };
+    
+    state.filteredData.forEach(row => {
+        const fullName = row['Full name'];
+        if (!fullName) {
+            willSkipCount++;
+            return;
+        }
+        
+        // Find person mapping
+        let personData = null;
+        for (const [personKey, data] of Object.entries(state.people)) {
+            if (fullName.includes(personKey)) {
+                personData = data;
+                break;
+            }
+        }
+        
+        if (!personData) {
+            willSkipCount++;
+            return;
+        }
+        
+        // Check existing values (respecting overrides even if null)
+        const existingTeam = getActualValue(row, 'team', null);
+        const existingProject = getActualValue(row, 'project', null);
+        const existingWorkType = getActualValue(row, 'workType', null);
+        
+        // Determine what will be updated
+        let willUpdate = false;
+        
+        // Team: apply if selected AND (missing or override is checked)
+        if (applyTeam && personData.team && (overrideExisting || !existingTeam)) {
+            updateDetails.team++;
+            willUpdate = true;
+        }
+        
+        // Project: apply if selected AND (missing or override is checked)
+        if (applyProject && personData.project && (overrideExisting || !existingProject)) {
+            updateDetails.project++;
+            willUpdate = true;
+        }
+        
+        // Work Type: apply if selected AND role's default work type AND (missing or override is checked)
+        if (applyWorkType && personData.role && state.roleWorkType[personData.role]) {
+            if (overrideExisting || !existingWorkType) {
+                updateDetails.workType++;
+                willUpdate = true;
+            }
+        }
+        
+        if (willUpdate) {
+            willUpdateCount++;
+        } else {
+            willSkipCount++;
+        }
+    });
+    
+    // Show confirmation dialog
+    if (willUpdateCount === 0) {
+        alert('No records will be updated. All filtered records already have the mapped values.');
+        return;
+    }
+    
+    // Build list of fields being applied
+    const fieldsApplied = [];
+    if (applyTeam) fieldsApplied.push('Team');
+    if (applyProject) fieldsApplied.push('Project');
+    if (applyWorkType) fieldsApplied.push('Work Type');
+    
+    let message = `⚠️ APPLY PERSON MAPPING\n\n`;
+    message += `Applying to: ${fieldsApplied.join(', ')}\n\n`;
+    message += `This will update ${willUpdateCount} record(s) in the filtered data:\n\n`;
+    if (updateDetails.team > 0) message += `  • Team: ${updateDetails.team} record(s)\n`;
+    if (updateDetails.project > 0) message += `  • Project: ${updateDetails.project} record(s)\n`;
+    if (updateDetails.workType > 0) message += `  • Work Type: ${updateDetails.workType} record(s)\n`;
+    message += `\n${willSkipCount} record(s) will be skipped (no person mapping found or already have values).\n\n`;
+    
+    if (overrideExisting) {
+        message += `⚠️ WARNING: "Override" is ENABLED!\n`;
+        message += `This will REPLACE existing values with person mapping defaults.\n`;
+        message += `Records with existing data in the selected fields will be overwritten.\n\n`;
+    } else {
+        message += `"Override" is disabled - only empty fields will be filled.\n`;
+        message += `Records with existing data will be skipped.\n\n`;
+    }
+    
+    message += `Do you want to proceed?`;
+    
+    const confirmed = confirm(message);
+    if (!confirmed) {
+        return;
+    }
+    
+    // Second pass: actually apply the updates
     let updatedCount = 0;
     let skippedCount = 0;
     
@@ -1683,29 +1891,29 @@ function applyPersonMapping() {
             return;
         }
         
-        // Check existing values
-        const existingTeam = row._overrides?.team || row.Team;
-        const existingProject = row._overrides?.project || row.Project;
-        const existingWorkType = row._overrides?.workType || row['Work Type'];
+        // Check existing values (respecting overrides even if null)
+        const existingTeam = getActualValue(row, 'team', null);
+        const existingProject = getActualValue(row, 'project', null);
+        const existingWorkType = getActualValue(row, 'workType', null);
         
         // Determine what needs to be updated
         let needsUpdate = false;
         const updates = {};
         
-        // Team: add if missing or override is checked
-        if (personData.team && (overrideExisting || !existingTeam)) {
+        // Team: apply if selected AND (missing or override is checked)
+        if (applyTeam && personData.team && (overrideExisting || !existingTeam)) {
             updates.team = personData.team;
             needsUpdate = true;
         }
         
-        // Project: add if missing or override is checked
-        if (personData.project && (overrideExisting || !existingProject)) {
+        // Project: apply if selected AND (missing or override is checked)
+        if (applyProject && personData.project && (overrideExisting || !existingProject)) {
             updates.project = personData.project;
             needsUpdate = true;
         }
         
-        // Work Type: add role's default work type if missing or override is checked
-        if (personData.role && state.roleWorkType[personData.role]) {
+        // Work Type: apply if selected AND role's default work type AND (missing or override is checked)
+        if (applyWorkType && personData.role && state.roleWorkType[personData.role]) {
             if (overrideExisting || !existingWorkType) {
                 updates.workType = state.roleWorkType[personData.role];
                 needsUpdate = true;
@@ -1718,22 +1926,9 @@ function applyPersonMapping() {
                 row._overrides = {};
             }
             
-            // Apply updates
+            // Apply updates (filteredData contains references to timesheetData objects)
             Object.assign(row._overrides, updates);
             updatedCount++;
-            
-            // Also update in original timesheetData
-            const originalRow = state.timesheetData.find(r => 
-                r['Full name'] === row['Full name'] && 
-                r['Issue Key'] === row['Issue Key'] &&
-                r['Work date'] === row['Work date']
-            );
-            if (originalRow) {
-                if (!originalRow._overrides) {
-                    originalRow._overrides = {};
-                }
-                Object.assign(originalRow._overrides, updates);
-            }
         } else {
             skippedCount++;
         }
@@ -1742,7 +1937,10 @@ function applyPersonMapping() {
     saveToLocalStorage();
     renderFilteredData();
     
-    alert(`Person mapping applied!\n${updatedCount} record(s) updated\n${skippedCount} record(s) skipped (already had values)`);
+    // Close modal
+    closeApplyMappingModal();
+    
+    alert(`✓ Person mapping applied!\n${updatedCount} record(s) updated\n${skippedCount} record(s) skipped`);
 }
 
 function toggleSelectAll(e) {
@@ -1868,13 +2066,16 @@ function onBatchFieldChange(e) {
     valueSelect.disabled = false;
     
     if (field === 'team') {
-        valueSelect.innerHTML = '<option value="">Select Team</option>' + 
+        valueSelect.innerHTML = '<option value="">Select Team</option>' +
+            '<option value="__CLEAR__">(Clear/Empty)</option>' + 
             state.teams.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
     } else if (field === 'workType') {
-        valueSelect.innerHTML = '<option value="">Select Work Type</option>' + 
+        valueSelect.innerHTML = '<option value="">Select Work Type</option>' +
+            '<option value="__CLEAR__">(Clear/Empty)</option>' + 
             state.workTypes.map(w => `<option value="${escapeHtml(w)}">${escapeHtml(w)}</option>`).join('');
     } else if (field === 'project') {
-        valueSelect.innerHTML = '<option value="">Select Project</option>' + 
+        valueSelect.innerHTML = '<option value="">Select Project</option>' +
+            '<option value="__CLEAR__">(Clear/Empty)</option>' + 
             state.projects.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
     }
     
@@ -1897,110 +2098,43 @@ async function applyBatchUpdate() {
     
     const selectedIndices = Array.from(state.selectedRows);
     
+    // Check if clearing/emptying field
+    if (value === '__CLEAR__') {
+        const fieldNames = {
+            'team': 'Team',
+            'workType': 'Work Type',
+            'project': 'Project'
+        };
+        const fieldName = fieldNames[field] || field;
+        const confirmed = confirm(
+            `⚠️ WARNING: You are about to CLEAR the ${fieldName} field for ${selectedIndices.length} record(s).\n\n` +
+            `This will remove the ${fieldName} information from these records.\n\n` +
+            `Do you want to proceed?`
+        );
+        if (!confirmed) {
+            return;
+        }
+    }
+    
     selectedIndices.forEach(idx => {
         const row = state.filteredData[idx];
         if (!row) return;
         
-        // Get current team, work type, and project values (from overrides or from row data or from person mapping)
-        let currentTeam = null;
-        let currentWorkType = null;
-        let currentProject = null;
-        
-        if (row._overrides) {
-            currentTeam = row._overrides.team;
-            currentWorkType = row._overrides.workType;
-            currentProject = row._overrides.project;
-        } else {
-            // Check if row has Team/Work Type/Project from CSV
-            currentTeam = row.Team;
-            currentWorkType = row['Work Type'];
-            currentProject = row.Project;
-            
-            // If not in CSV, check person mapping
-            if (!currentTeam || !currentWorkType || !currentProject) {
-                const fullName = row['Full name'] || '';
-                for (const [personKey, data] of Object.entries(state.people)) {
-                    if (fullName && fullName.includes(personKey)) {
-                        if (!currentTeam && data.team) currentTeam = data.team;
-                        if (!currentProject && data.project) currentProject = data.project;
-                        // Get work type from role mapping
-                        if (!currentWorkType && data.role && state.roleWorkType[data.role]) {
-                            currentWorkType = state.roleWorkType[data.role];
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        
-        // Initialize overrides if doesn't exist and preserve current values
+        // Initialize overrides if doesn't exist (but DON'T pre-populate with current values)
         if (!row._overrides) {
             row._overrides = {};
-            if (currentTeam) row._overrides.team = currentTeam;
-            if (currentWorkType) row._overrides.workType = currentWorkType;
-            if (currentProject) row._overrides.project = currentProject;
         }
         
-        // Apply update
+        // Apply update - only update the field user selected
+        // Note: filteredData contains references to the same objects in timesheetData,
+        // so modifying row here automatically updates the object in timesheetData too
+        const finalValue = value === '__CLEAR__' ? null : value;
         if (field === 'team') {
-            row._overrides.team = value;
+            row._overrides.team = finalValue;
         } else if (field === 'workType') {
-            row._overrides.workType = value;
+            row._overrides.workType = finalValue;
         } else if (field === 'project') {
-            row._overrides.project = value;
-        }
-        
-        // Also update in original timesheetData
-        const originalRow = state.timesheetData.find(r => 
-            r['Full name'] === row['Full name'] && 
-            r['Issue Key'] === row['Issue Key'] &&
-            r['Work date'] === row['Work date']
-        );
-        if (originalRow) {
-            // Get current values for original row too
-            let origCurrentTeam = null;
-            let origCurrentWorkType = null;
-            let origCurrentProject = null;
-            
-            if (originalRow._overrides) {
-                origCurrentTeam = originalRow._overrides.team;
-                origCurrentWorkType = originalRow._overrides.workType;
-                origCurrentProject = originalRow._overrides.project;
-            } else {
-                origCurrentTeam = originalRow.Team;
-                origCurrentWorkType = originalRow['Work Type'];
-                origCurrentProject = originalRow.Project;
-                
-                if (!origCurrentTeam || !origCurrentWorkType || !origCurrentProject) {
-                    const fullName = originalRow['Full name'] || '';
-                    for (const [personKey, data] of Object.entries(state.people)) {
-                        if (fullName && fullName.includes(personKey)) {
-                            if (!origCurrentTeam && data.team) origCurrentTeam = data.team;
-                            if (!origCurrentProject && data.project) origCurrentProject = data.project;
-                            // Get work type from role mapping
-                            if (!origCurrentWorkType && data.role && state.roleWorkType[data.role]) {
-                                origCurrentWorkType = state.roleWorkType[data.role];
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-            
-            if (!originalRow._overrides) {
-                originalRow._overrides = {};
-                if (origCurrentTeam) originalRow._overrides.team = origCurrentTeam;
-                if (origCurrentWorkType) originalRow._overrides.workType = origCurrentWorkType;
-                if (origCurrentProject) originalRow._overrides.project = origCurrentProject;
-            }
-            
-            if (field === 'team') {
-                originalRow._overrides.team = value;
-            } else if (field === 'workType') {
-                originalRow._overrides.workType = value;
-            } else if (field === 'project') {
-                originalRow._overrides.project = value;
-            }
+            row._overrides.project = finalValue;
         }
     });
     
@@ -2073,10 +2207,27 @@ function parseCSV(csv) {
     const lines = csv.split('\n').filter(line => line.trim());
     if (lines.length === 0) return [];
     
-    const headers = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
+    // Detect delimiter (comma or semicolon)
+    const firstLine = lines[0];
+    const commaCount = (firstLine.match(/,/g) || []).length;
+    const semicolonCount = (firstLine.match(/;/g) || []).length;
+    const delimiter = semicolonCount > commaCount ? ';' : ',';
+    
+    const headers = firstLine.split(delimiter).map(h => h.replace(/^"|"$/g, '').trim());
     const expectedColumns = headers.length;
     const rows = [];
     const skippedRows = [];
+    
+    // Detect CSV format based on headers
+    // New format has: Tarih, Ad Soyad, and either "Servis Ürün Adı" or "Servis Urun Adı"
+    const isNewFormat = headers.includes('Tarih') && headers.includes('Ad Soyad') && 
+                        (headers.includes('Servis Ürün Adı') || headers.includes('Servis Urun Adı'));
+    
+    console.log('CSV Headers:', headers); // Debug
+    console.log('Is New Format:', isNewFormat); // Debug
+    
+    // Store format in state
+    state.csvFormat = isNewFormat ? 'new' : 'original';
     
     let i = 1;
     while (i < lines.length) {
@@ -2121,16 +2272,87 @@ function parseCSV(csv) {
         }
         
         // Now parse the complete line (which may span multiple raw lines)
-        const values = parseCSVLine(currentLine);
+        const values = parseCSVLine(currentLine, delimiter);
         
         if (values.length === expectedColumns) {
             const row = {};
-            headers.forEach((header, idx) => {
-                // Skip _overrides column if it exists in CSV
-                if (header !== '_overrides') {
-                    row[header] = values[idx];
+            
+            // Map fields based on CSV format
+            if (isNewFormat) {
+                // New format mapping
+                let servisUrunAdi = '';
+                let servisId = '';
+                
+                headers.forEach((header, idx) => {
+                    const value = values[idx];
+                    const normalizedHeader = header.trim();
+                    
+                    if (normalizedHeader === 'Tarih') {
+                        row['Work date'] = value;
+                    } else if (normalizedHeader === 'Servis Ürün Adı' || normalizedHeader === 'Servis Urun Adı' || normalizedHeader === 'Servis Urun Adı') {
+                        servisUrunAdi = value;
+                    } else if (normalizedHeader === 'Servis Id') {
+                        servisId = value;
+                    } else if (normalizedHeader === 'Project Key') {
+                        // Store Project Key temporarily
+                        row['Project Key'] = value;
+                    } else if (normalizedHeader === 'Project Name') {
+                        // Combine with Project Key: "KEY: Name"
+                        const projectKey = row['Project Key'] || '';
+                        row['Project Key'] = projectKey && value ? `${projectKey}: ${value}` : (projectKey || value);
+                    } else if (normalizedHeader === 'Ad Soyad') {
+                        row['Full name'] = value;
+                    } else if (normalizedHeader === 'Issue Name') {
+                        row['Issue Summary'] = value; // Map to Issue Summary only
+                    } else if (normalizedHeader === 'Saat') {
+                        // Replace comma with dot for decimal parsing
+                        row['Hours'] = value ? value.replace(',', '.') : value;
+                    } else if (normalizedHeader === 'Team') {
+                        row['Team'] = value;
+                    } else if (normalizedHeader === 'Project') {
+                        row['Project'] = value;
+                    } else if (normalizedHeader === 'Work Type') {
+                        row['Work Type'] = value;
+                    }
+                });
+                
+                // Use Servis Id if Servis Urun Adı is empty or only "-"
+                const trimmedServisUrun = (servisUrunAdi || '').trim();
+                if (!trimmedServisUrun || trimmedServisUrun === '-') {
+                    row['Servis'] = servisId;
+                } else {
+                    row['Servis'] = servisUrunAdi;
                 }
-            });
+                
+                // Debug: Check Issue Summary mapping
+                if (i === 1) {
+                    console.log('First row Issue Summary:', row['Issue Summary']);
+                    console.log('Full first row:', row);
+                }
+                
+                // Set empty values for missing fields
+                if (!row['Activity Name']) row['Activity Name'] = '';
+                if (!row['Issue Status']) row['Issue Status'] = '';
+                if (!row['Issue Name']) row['Issue Name'] = ''; // Set empty if not present
+            } else {
+                // Original format
+                headers.forEach((header, idx) => {
+                    // Skip _overrides column if it exists in CSV
+                    if (header !== '_overrides') {
+                        let value = values[idx];
+                        // Replace comma with dot for Hours field (decimal parsing)
+                        if (header === 'Hours') {
+                            value = value ? value.replace(',', '.') : value;
+                        }
+                        // Normalize 'Issue summary' to 'Issue Summary'
+                        if (header === 'Issue summary') {
+                            row['Issue Summary'] = value;
+                        } else {
+                            row[header] = value;
+                        }
+                    }
+                });
+            }
             rows.push(row);
         } else {
             // Store skipped row info
@@ -2159,7 +2381,7 @@ function parseCSV(csv) {
     return rows;
 }
 
-function parseCSVLine(line) {
+function parseCSVLine(line, delimiter = ',') {
     const values = [];
     let current = '';
     let inQuotes = false;
@@ -2174,7 +2396,7 @@ function parseCSVLine(line) {
             } else {
                 inQuotes = !inQuotes;
             }
-        } else if (char === ',' && !inQuotes) {
+        } else if (char === delimiter && !inQuotes) {
             values.push(current.trim());
             current = '';
         } else {
@@ -2311,15 +2533,12 @@ function applyFilters() {
         }
         
         // Get actual team, work type, and project with priority order:
-        // 1. Override (manual edit)
+        // 1. Override (manual edit) - even if null, respect the override
         // 2. CSV data (Team/Work Type/Project columns)
         // 3. Person mapping (fallback)
-        let actualTeam = row._overrides?.team || row.Team || personData?.team;
-        let actualWorkType = row._overrides?.workType || row['Work Type'];
-        if (!actualWorkType && personData?.role) {
-            actualWorkType = state.roleWorkType[personData.role];
-        }
-        let actualProject = row._overrides?.project || row.Project || personData?.project;
+        const actualTeam = getActualValue(row, 'team', personData);
+        const actualWorkType = getActualValue(row, 'workType', personData);
+        const actualProject = getActualValue(row, 'project', personData);
         
         // Apply filters with NOT logic
         if (filters.projects.length) {
@@ -2363,10 +2582,43 @@ function applyFilters() {
         if (filters.workDateStart || filters.workDateEnd) {
             const workDate = row['Work date'];
             if (workDate) {
-                // Extract date part only (YYYY-MM-DD)
+                // Extract date part only
                 const datePart = workDate.split(' ')[0];
-                if (filters.workDateStart && datePart < filters.workDateStart) return false;
-                if (filters.workDateEnd && datePart > filters.workDateEnd) return false;
+                
+                // Parse date to comparable format (Date object)
+                let dateObj;
+                if (datePart.includes('/')) {
+                    // DD/MM/YYYY format
+                    const parts = datePart.split('/');
+                    if (parts.length === 3) {
+                        const day = parseInt(parts[0], 10);
+                        const month = parseInt(parts[1], 10);
+                        const year = parseInt(parts[2], 10);
+                        dateObj = new Date(year, month - 1, day);
+                    }
+                } else {
+                    // YYYY-MM-DD format
+                    dateObj = new Date(datePart);
+                }
+                
+                if (!dateObj || isNaN(dateObj.getTime())) {
+                    return false; // Invalid date
+                }
+                
+                // Normalize to start of day (00:00:00) for comparison
+                dateObj.setHours(0, 0, 0, 0);
+                
+                // Compare with filter dates (input dates are in YYYY-MM-DD format)
+                if (filters.workDateStart) {
+                    const startDate = new Date(filters.workDateStart);
+                    startDate.setHours(0, 0, 0, 0);
+                    if (dateObj < startDate) return false;
+                }
+                if (filters.workDateEnd) {
+                    const endDate = new Date(filters.workDateEnd);
+                    endDate.setHours(23, 59, 59, 999);
+                    if (dateObj > endDate) return false;
+                }
             } else {
                 // If no work date in record, filter it out when date filter is active
                 return false;
@@ -2374,7 +2626,7 @@ function applyFilters() {
         }
         
         if (filters.issueSummary) {
-            const summary = (row['Issue summary'] || '').toLowerCase();
+            const summary = (row['Issue Summary'] || '').toLowerCase();
             const matches = summary.includes(filters.issueSummary);
             // If NOT is checked, exclude matches. If NOT is not checked, include only matches.
             if (filters.issueSummaryNot) {
@@ -2729,11 +2981,28 @@ function clearReportFilters() {
 function formatDateShort(dateString) {
     if (!dateString) return '-';
     
-    // Get date part only (YYYY-MM-DD)
-    const datePart = dateString.split(' ')[0];
-    const date = new Date(datePart);
+    // Get date part only (remove time if exists)
+    let datePart = dateString.split(' ')[0];
     
-    if (isNaN(date.getTime())) return datePart;
+    // Parse different date formats
+    let date;
+    
+    // Check if format is DD/MM/YYYY (European format like "31/12/2025")
+    if (datePart.includes('/')) {
+        const parts = datePart.split('/');
+        if (parts.length === 3) {
+            const day = parseInt(parts[0], 10);
+            const month = parseInt(parts[1], 10);
+            const year = parseInt(parts[2], 10);
+            // Create date with month-1 because JS months are 0-indexed
+            date = new Date(year, month - 1, day);
+        }
+    } else {
+        // Assume YYYY-MM-DD format
+        date = new Date(datePart);
+    }
+    
+    if (!date || isNaN(date.getTime())) return datePart;
     
     const day = date.getDate();
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -2766,36 +3035,22 @@ function renderFilteredData() {
         // Extract person name: take text before "-", remove spaces
         const personName = fullName.split('-')[0].trim();
         
-        let team = '-', workType = '-', project = '-';
-        
-        // Priority order:
-        // 1. Check for overrides (manual edits)
-        // 2. Check CSV data (Team, Work Type, and Project columns)
-        // 3. Check person mapping (fallback)
-        
-        if (row._overrides) {
-            team = row._overrides.team || '-';
-            workType = row._overrides.workType || '-';
-            project = row._overrides.project || '-';
-        } else if (row.Team || row['Work Type'] || row.Project) {
-            // Use data from CSV if available
-            team = row.Team || '-';
-            workType = row['Work Type'] || '-';
-            project = row.Project || '-';
-        } else {
-            // Fallback to person mapping
-            for (const [personKey, data] of Object.entries(state.people)) {
-                if (fullName && fullName.includes(personKey)) {
-                    team = data.team || '-';
-                    project = data.project || '-';
-                    // Get work type from role mapping
-                    if (data.role && state.roleWorkType[data.role]) {
-                        workType = state.roleWorkType[data.role];
-                    }
-                    break;
-                }
+        // Find person mapping for fallback
+        let personData = null;
+        for (const [personKey, data] of Object.entries(state.people)) {
+            if (fullName && fullName.includes(personKey)) {
+                personData = data;
+                break;
             }
         }
+        
+        // Get actual values using proper priority:
+        // 1. Override (if field exists in _overrides, even if null)
+        // 2. CSV data
+        // 3. Person mapping
+        const team = getActualValue(row, 'team', personData) || '-';
+        const workType = getActualValue(row, 'workType', personData) || '-';
+        const project = getActualValue(row, 'project', personData) || '-';
         
         // Format work date to show only date part (not time)
         const workDate = row['Work date'] || '';
@@ -2805,7 +3060,7 @@ function renderFilteredData() {
         const servisDisplay = getServisDisplayName(row['Servis']);
         
         // Truncate issue summary for display
-        const issueSummary = row['Issue summary'] || '';
+        const issueSummary = row['Issue Summary'] || '';
         const truncatedSummary = issueSummary.length > 50 ? issueSummary.substring(0, 50) + '...' : issueSummary;
         
         const isSelected = state.selectedRows.has(actualIdx);
@@ -2822,7 +3077,7 @@ function renderFilteredData() {
                 <td onclick="showRowDetails(${actualIdx})">${escapeHtml(row['Activity Name'] || '')}</td>
                 <td onclick="showRowDetails(${actualIdx})">${escapeHtml(truncatedSummary)}</td>
                 <td onclick="showRowDetails(${actualIdx})">${escapeHtml(row['Issue Status'] || '')}</td>
-                <td onclick="showRowDetails(${actualIdx})">${formatNumber(convertValue(parseFloat(row.Hours || 0)))}</td>
+                <td onclick="showRowDetails(${actualIdx})">${formatNumber(convertValue(truncateHours(parseFloat(row.Hours || 0))))}</td>
                 <td onclick="showRowDetails(${actualIdx})">${escapeHtml(team)}</td>
                 <td onclick="showRowDetails(${actualIdx})">${escapeHtml(workType)}</td>
                 <td onclick="showRowDetails(${actualIdx})">${escapeHtml(project)}</td>
@@ -2846,7 +3101,7 @@ function updateSummaryStats() {
     state.filteredData.forEach(row => {
         if (row['Full name']) uniquePeople.add(row['Full name']);
         if (row['Issue Key']) uniqueIssues.add(row['Issue Key']);
-        totalHours += parseFloat(row.Hours) || 0;
+        totalHours += truncateHours(parseFloat(row.Hours) || 0);
     });
     
     const displayHours = convertValue(totalHours);
@@ -2863,36 +3118,23 @@ function showRowDetails(rowIndex) {
     
     const fullName = row['Full name'] || '';
     const personName = fullName.split('-')[0].trim();
-    let team = '-', workType = '-', project = '-';
     
-    // Priority order:
-    // 1. Check for overrides (manual edits)
-    // 2. Check CSV data (Team/Work Type/Project columns)
-    // 3. Check person mapping (fallback)
-    
-    if (row._overrides) {
-        team = row._overrides.team || '-';
-        workType = row._overrides.workType || '-';
-        project = row._overrides.project || '-';
-    } else if (row.Team || row['Work Type'] || row.Project) {
-        // Use data from CSV if available
-        team = row.Team || '-';
-        workType = row['Work Type'] || '-';
-        project = row.Project || '-';
-    } else {
-        // Fallback to person mapping
-        for (const [personKey, data] of Object.entries(state.people)) {
-            if (fullName && fullName.includes(personKey)) {
-                team = data.team || '-';
-                project = data.project || '-';
-                // Get work type from role mapping
-                if (data.role && state.roleWorkType[data.role]) {
-                    workType = state.roleWorkType[data.role];
-                }
-                break;
-            }
+    // Find person mapping for fallback
+    let personData = null;
+    for (const [personKey, data] of Object.entries(state.people)) {
+        if (fullName && fullName.includes(personKey)) {
+            personData = data;
+            break;
         }
     }
+    
+    // Get actual values using proper priority:
+    // 1. Override (if field exists in _overrides, even if null)
+    // 2. CSV data
+    // 3. Person mapping
+    const team = getActualValue(row, 'team', personData) || '-';
+    const workType = getActualValue(row, 'workType', personData) || '-';
+    const project = getActualValue(row, 'project', personData) || '-';
     
     const epic = row.Epic || row['Epic Link'] || '-';
     
@@ -2924,7 +3166,7 @@ function showRowDetails(rowIndex) {
             </div>
             <div class="detail-row">
                 <strong>Issue Summary:</strong>
-                <span>${escapeHtml(row['Issue summary'] || '')}</span>
+                <span>${escapeHtml(row['Issue Summary'] || '')}</span>
             </div>
             <div class="detail-row">
                 <strong>Issue Status:</strong>
@@ -3047,7 +3289,7 @@ function showRowEdit(rowIndex) {
             </div>
             <div class="detail-row">
                 <label><strong>Issue Summary:</strong></label>
-                <input type="text" id="edit-issue-summary" class="input" value="${escapeHtml(row['Issue summary'] || '')}" disabled>
+                <input type="text" id="edit-issue-summary" class="input" value="${escapeHtml(row['Issue Summary'] || '')}" disabled>
             </div>
             <div class="detail-row">
                 <label><strong>Issue Status:</strong></label>
@@ -3151,6 +3393,9 @@ function exportFilteredDataCSV() {
         return;
     }
     
+    // Use the format that was imported
+    const useNewFormat = state.csvFormat === 'new';
+    
     // Get all original columns from the first row
     const allOriginalHeaders = Object.keys(state.filteredData[0]).filter(h => h !== '_overrides');
     
@@ -3169,14 +3414,9 @@ function exportFilteredDataCSV() {
         }
         
         // Priority: override > CSV data > person mapping
-        const actualTeam = row._overrides?.team || row.Team || personData?.team || '';
-        const actualProject = row._overrides?.project || row.Project || personData?.project || '';
-        let actualWorkType = row._overrides?.workType || row['Work Type'];
-        if (!actualWorkType && personData?.role) {
-            actualWorkType = state.roleWorkType[personData.role] || '';
-        } else if (!actualWorkType) {
-            actualWorkType = '';
-        }
+        const actualTeam = getActualValue(row, 'team', personData) || '';
+        const actualProject = getActualValue(row, 'project', personData) || '';
+        const actualWorkType = getActualValue(row, 'workType', personData) || '';
         
         // Create new row with actual values
         return {
@@ -3187,30 +3427,70 @@ function exportFilteredDataCSV() {
         };
     });
     
-    // Ensure Team, Work Type, Project are in headers (add if missing)
-    const headers = [...allOriginalHeaders];
-    if (!headers.includes('Team')) headers.push('Team');
-    if (!headers.includes('Work Type')) headers.push('Work Type');
-    if (!headers.includes('Project')) headers.push('Project');
+    let csv = '';
+    let filename = '';
     
-    // Build CSV
-    let csv = headers.map(h => `"${h}"`).join(',') + '\n';
-    
-    processedData.forEach(row => {
-        const values = headers.map(h => {
-            const value = row[h] || '';
-            return `"${String(value).replace(/"/g, '""')}"`;
-        });
+    if (useNewFormat) {
+        // NEW FORMAT EXPORT
+        const newFormatHeaders = ['Tarih', 'Servis Urun Adı', 'Project Key', 'Project Name', 'Ad Soyad', 'Issue Name', 'Saat', 'Team', 'Work Type', 'Project'];
+        csv = newFormatHeaders.map(h => `"${h}"`).join(';') + '\n';
         
-        csv += values.join(',') + '\n';
-    });
+        processedData.forEach(row => {
+            const projectKeyFull = row['Project Key'] || '';
+            let projectKey = '';
+            let projectName = '';
+            
+            // Split "Project Key: Project Name" if exists
+            if (projectKeyFull.includes(':')) {
+                const parts = projectKeyFull.split(':');
+                projectKey = parts[0].trim();
+                projectName = parts.slice(1).join(':').trim();
+            } else {
+                projectKey = projectKeyFull;
+            }
+            
+            const values = [
+                row['Work date'] || '',
+                row['Servis'] || '',
+                projectKey,
+                projectName,
+                row['Full name'] || '',
+                row['Issue Name'] || '',
+                row['Hours'] || '',
+                row.Team || '',
+                row['Work Type'] || '',
+                row.Project || ''
+            ];
+            
+            csv += values.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';') + '\n';
+        });
+        filename = 'filtered-timesheet-data-new-format.csv';
+    } else {
+        // ORIGINAL FORMAT EXPORT
+        // Ensure Team, Work Type, Project are in headers (add if missing)
+        const headers = [...allOriginalHeaders];
+        if (!headers.includes('Team')) headers.push('Team');
+        if (!headers.includes('Work Type')) headers.push('Work Type');
+        if (!headers.includes('Project')) headers.push('Project');
+        
+        // Build CSV
+        csv = headers.map(h => `"${h}"`).join(',') + '\n' +
+            processedData.map(row => {
+                const values = headers.map(h => {
+                    const value = row[h] || '';
+                    return `"${String(value).replace(/"/g, '""')}"`;
+                });
+                return values.join(',');
+            }).join('\n');
+        filename = 'filtered-timesheet-data.csv';
+    }
     
     // Download
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'filtered-timesheet-data.csv';
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
 }
@@ -3407,14 +3687,34 @@ function aggregateByTimePeriod(filteredData, granularity) {
         const workDate = row['Work date'];
         if (!workDate) return;
         
-        const datePart = workDate.split(' ')[0]; // Get YYYY-MM-DD part
-        const date = new Date(datePart);
-        if (isNaN(date.getTime())) return;
+        const datePart = workDate.split(' ')[0]; // Get date part
+        
+        // Parse date to Date object, handling both DD/MM/YYYY and YYYY-MM-DD formats
+        let date;
+        if (datePart.includes('/')) {
+            // DD/MM/YYYY format
+            const parts = datePart.split('/');
+            if (parts.length === 3) {
+                const day = parseInt(parts[0], 10);
+                const month = parseInt(parts[1], 10);
+                const year = parseInt(parts[2], 10);
+                date = new Date(year, month - 1, day);
+            }
+        } else {
+            // YYYY-MM-DD format
+            date = new Date(datePart);
+        }
+        
+        if (!date || isNaN(date.getTime())) return;
         
         let periodKey;
         
         if (granularity === 'daily') {
-            periodKey = datePart; // YYYY-MM-DD
+            // Use ISO format (YYYY-MM-DD) for consistent sorting and grouping
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            periodKey = `${year}-${month}-${day}`;
         } else if (granularity === 'weekly') {
             // Get the Monday of the week
             const dayOfWeek = date.getDay();
@@ -3436,66 +3736,28 @@ function aggregateByTimePeriod(filteredData, granularity) {
         // Get the key for the current report type
         let categoryKey;
         const fullName = row['Full name'];
+        let personData = null;
         
-        if (state.currentReportType === 'person') {
-            for (const personKey of Object.keys(state.people)) {
-                if (fullName && fullName.includes(personKey)) {
-                    categoryKey = personKey;
-                    break;
-                }
-            }
-            if (!categoryKey) categoryKey = fullName || 'Unknown';
-        } else if (state.currentReportType === 'team') {
-            if (row._overrides && row._overrides.team) {
-                categoryKey = row._overrides.team;
-            } else if (row.Team) {
-                categoryKey = row.Team;
-            } else {
-                for (const [personKey, data] of Object.entries(state.people)) {
-                    if (fullName && fullName.includes(personKey)) {
-                        categoryKey = data.team || 'Unassigned';
-                        break;
-                    }
-                }
-                if (!categoryKey) categoryKey = 'Unassigned';
-            }
-        } else if (state.currentReportType === 'project') {
-            if (row._overrides && row._overrides.project) {
-                categoryKey = row._overrides.project;
-            } else if (row.Project) {
-                categoryKey = row.Project;
-            } else {
-                for (const [personKey, data] of Object.entries(state.people)) {
-                    if (fullName && fullName.includes(personKey)) {
-                        categoryKey = data.project || 'Unassigned';
-                        break;
-                    }
-                }
-                if (!categoryKey) categoryKey = 'Unassigned';
-            }
-        } else if (state.currentReportType === 'role') {
+        // Find person data for fallback
+        if (fullName) {
             for (const [personKey, data] of Object.entries(state.people)) {
                 if (fullName && fullName.includes(personKey)) {
-                    categoryKey = data.role || 'Unassigned';
+                    personData = { ...data, name: personKey };
                     break;
                 }
             }
-            if (!categoryKey) categoryKey = 'Unassigned';
+        }
+        
+        if (state.currentReportType === 'person') {
+            categoryKey = personData?.name || fullName || 'Unknown';
+        } else if (state.currentReportType === 'team') {
+            categoryKey = getActualValue(row, 'team', personData) || 'Unassigned';
+        } else if (state.currentReportType === 'project') {
+            categoryKey = getActualValue(row, 'project', personData) || 'Unassigned';
+        } else if (state.currentReportType === 'role') {
+            categoryKey = personData?.role || 'Unassigned';
         } else if (state.currentReportType === 'workType') {
-            // Priority: override > CSV data > person role mapping
-            if (row._overrides?.workType) {
-                categoryKey = row._overrides.workType;
-            } else if (row['Work Type']) {
-                categoryKey = row['Work Type'];
-            } else {
-                for (const [personKey, data] of Object.entries(state.people)) {
-                    if (fullName && fullName.includes(personKey)) {
-                        categoryKey = state.roleWorkType[data.role] || 'Unassigned';
-                        break;
-                    }
-                }
-                if (!categoryKey) categoryKey = 'Unassigned';
-            }
+            categoryKey = getActualValue(row, 'workType', personData) || 'Unassigned';
         } else if (state.currentReportType === 'activity') {
             categoryKey = row['Activity Name'] || 'Unknown';
         } else if (state.currentReportType === 'status') {
@@ -3515,7 +3777,7 @@ function aggregateByTimePeriod(filteredData, granularity) {
             periodMap[periodKey] = { total: 0, breakdown: {} };
         }
         
-        const hours = parseFloat(row.Hours) || 0;
+        const hours = truncateHours(parseFloat(row.Hours) || 0);
         periodMap[periodKey].total += hours;
         
         if (!periodMap[periodKey].breakdown[categoryKey]) {
@@ -3582,15 +3844,12 @@ function generateReport() {
         }
         
         // Get actual team, work type, and project with priority order:
-        // 1. Override (manual edit)
+        // 1. Override (manual edit) - even if null, respect the override
         // 2. CSV data (Team/Work Type/Project columns)
         // 3. Person mapping (fallback)
-        let actualTeam = row._overrides?.team || row.Team || personData?.team;
-        let actualWorkType = row._overrides?.workType || row['Work Type'];
-        if (!actualWorkType && personData?.role) {
-            actualWorkType = state.roleWorkType[personData.role];
-        }
-        let actualProject = row._overrides?.project || row.Project || personData?.project;
+        const actualTeam = getActualValue(row, 'team', personData);
+        const actualWorkType = getActualValue(row, 'workType', personData);
+        const actualProject = getActualValue(row, 'project', personData);
         
         // Apply filters with NOT logic
         if (filters.projects.length) {
@@ -3634,16 +3893,50 @@ function generateReport() {
         if (filters.workDateStart || filters.workDateEnd) {
             const workDate = row['Work date'];
             if (workDate) {
+                // Extract date part only
                 const datePart = workDate.split(' ')[0];
-                if (filters.workDateStart && datePart < filters.workDateStart) return false;
-                if (filters.workDateEnd && datePart > filters.workDateEnd) return false;
+                
+                // Parse date to comparable format (Date object)
+                let dateObj;
+                if (datePart.includes('/')) {
+                    // DD/MM/YYYY format
+                    const parts = datePart.split('/');
+                    if (parts.length === 3) {
+                        const day = parseInt(parts[0], 10);
+                        const month = parseInt(parts[1], 10);
+                        const year = parseInt(parts[2], 10);
+                        dateObj = new Date(year, month - 1, day);
+                    }
+                } else {
+                    // YYYY-MM-DD format
+                    dateObj = new Date(datePart);
+                }
+                
+                if (!dateObj || isNaN(dateObj.getTime())) {
+                    return false; // Invalid date
+                }
+                
+                // Normalize to start of day (00:00:00) for comparison
+                dateObj.setHours(0, 0, 0, 0);
+                
+                // Compare with filter dates (input dates are in YYYY-MM-DD format)
+                if (filters.workDateStart) {
+                    const startDate = new Date(filters.workDateStart);
+                    startDate.setHours(0, 0, 0, 0);
+                    if (dateObj < startDate) return false;
+                }
+                if (filters.workDateEnd) {
+                    const endDate = new Date(filters.workDateEnd);
+                    endDate.setHours(23, 59, 59, 999);
+                    if (dateObj > endDate) return false;
+                }
             } else {
                 return false;
             }
         }
         
         if (filters.issueSummary) {
-            const summary = row['Issue summary']?.toLowerCase() || '';
+            const summary = row['Issue Summary']?.toLowerCase() || '';
             const matches = summary.includes(filters.issueSummary);
             // If NOT is checked, exclude matches. If NOT is not checked, include only matches.
             if (filters.issueSummaryNot) {
@@ -3746,13 +4039,12 @@ function generateReport() {
         }
         
         if (!aggregated[key]) aggregated[key] = 0;
-        aggregated[key] += parseFloat(row.Hours) || 0;
+        aggregated[key] += truncateHours(parseFloat(row.Hours) || 0);
     });
     
     // Sort by hours descending
     const sorted = Object.entries(aggregated)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 20); // Top 20
+        .sort((a, b) => b[1] - a[1]);
     
     // Store report data for reordering (add visible property)
     state.reportData = sorted.map(([label, value]) => ({ label, value, visible: true }));
@@ -4526,12 +4818,9 @@ function openDataPointDetails(dataPointIndex) {
             }
         }
         
-        let actualTeam = row._overrides?.team || row.Team || personData?.team;
-        let actualWorkType = row._overrides?.workType || row['Work Type'];
-        if (!actualWorkType && personData?.role) {
-            actualWorkType = state.roleWorkType[personData.role];
-        }
-        let actualProject = row._overrides?.project || row.Project || personData?.project;
+        const actualTeam = getActualValue(row, 'team', personData);
+        const actualWorkType = getActualValue(row, 'workType', personData);
+        const actualProject = getActualValue(row, 'project', personData);
         
         // Apply global filters first
         if (filters.projects.length) {
@@ -4573,15 +4862,49 @@ function openDataPointDetails(dataPointIndex) {
         if (filters.workDateStart || filters.workDateEnd) {
             const workDate = row['Work date'];
             if (workDate) {
+                // Extract date part only
                 const datePart = workDate.split(' ')[0];
-                if (filters.workDateStart && datePart < filters.workDateStart) return false;
-                if (filters.workDateEnd && datePart > filters.workDateEnd) return false;
+                
+                // Parse date to comparable format (Date object)
+                let dateObj;
+                if (datePart.includes('/')) {
+                    // DD/MM/YYYY format
+                    const parts = datePart.split('/');
+                    if (parts.length === 3) {
+                        const day = parseInt(parts[0], 10);
+                        const month = parseInt(parts[1], 10);
+                        const year = parseInt(parts[2], 10);
+                        dateObj = new Date(year, month - 1, day);
+                    }
+                } else {
+                    // YYYY-MM-DD format
+                    dateObj = new Date(datePart);
+                }
+                
+                if (!dateObj || isNaN(dateObj.getTime())) {
+                    return false; // Invalid date
+                }
+                
+                // Normalize to start of day (00:00:00) for comparison
+                dateObj.setHours(0, 0, 0, 0);
+                
+                // Compare with filter dates (input dates are in YYYY-MM-DD format)
+                if (filters.workDateStart) {
+                    const startDate = new Date(filters.workDateStart);
+                    startDate.setHours(0, 0, 0, 0);
+                    if (dateObj < startDate) return false;
+                }
+                if (filters.workDateEnd) {
+                    const endDate = new Date(filters.workDateEnd);
+                    endDate.setHours(23, 59, 59, 999);
+                    if (dateObj > endDate) return false;
+                }
             } else {
                 return false;
             }
         }
         if (filters.issueSummary) {
-            const summary = row['Issue summary']?.toLowerCase() || '';
+            const summary = row['Issue Summary']?.toLowerCase() || '';
             const matches = summary.includes(filters.issueSummary);
             if (filters.issueSummaryNot) {
                 if (matches) return false;
@@ -4669,9 +4992,9 @@ function populateDataPointFilters() {
             }
         }
         
-        const actualTeam = row._overrides?.team || row.Team || personData?.team;
-        const actualWorkType = row._overrides?.workType || row['Work Type'] || (personData?.role ? state.roleWorkType[personData.role] : null);
-        const actualProject = row._overrides?.project || row.Project || personData?.project;
+        const actualTeam = getActualValue(row, 'team', personData);
+        const actualWorkType = getActualValue(row, 'workType', personData);
+        const actualProject = getActualValue(row, 'project', personData);
         
         if (actualProject) projects.add(actualProject);
         if (actualTeam) teams.add(actualTeam);
@@ -4723,7 +5046,7 @@ function updateDataPointStatistics() {
             }
         }
         
-        const hours = parseFloat(row.Hours) || 0;
+        const hours = truncateHours(parseFloat(row.Hours) || 0);
         totalHours += hours;
         
         const workDate = row['Work date'];
@@ -4791,9 +5114,9 @@ function applyDataPointFilters() {
             }
         }
         
-        const actualTeam = row._overrides?.team || row.Team || personData?.team;
-        const actualWorkType = row._overrides?.workType || row['Work Type'] || (personData?.role ? state.roleWorkType[personData.role] : null);
-        const actualProject = row._overrides?.project || row.Project || personData?.project;
+        const actualTeam = getActualValue(row, 'team', personData);
+        const actualWorkType = getActualValue(row, 'workType', personData);
+        const actualProject = getActualValue(row, 'project', personData);
         
         if (selectedProject && actualProject !== selectedProject) return false;
         if (selectedTeam && actualTeam !== selectedTeam) return false;
@@ -4854,15 +5177,15 @@ function renderDataPointTable() {
             }
         }
         
-        const actualTeam = row._overrides?.team || row.Team || personData?.team || '';
-        const actualWorkType = row._overrides?.workType || row['Work Type'] || (personData?.role ? state.roleWorkType[personData.role] : '') || '';
-        const actualProject = row._overrides?.project || row.Project || personData?.project || '';
+        const actualTeam = getActualValue(row, 'team', personData) || '';
+        const actualWorkType = getActualValue(row, 'workType', personData) || '';
+        const actualProject = getActualValue(row, 'project', personData) || '';
         const actualRole = personData?.role || '';
         
         const tr = document.createElement('tr');
         
         const workDate = row['Work date'] ? row['Work date'].split(' ')[0] : '';
-        const hours = parseFloat(row.Hours) || 0;
+        const hours = truncateHours(parseFloat(row.Hours) || 0);
         
         tr.innerHTML = `
             <td>${escapeHtml(workDate)}</td>
@@ -4871,8 +5194,8 @@ function renderDataPointTable() {
             <td>${escapeHtml(actualTeam)}</td>
             <td>${escapeHtml(actualRole)}</td>
             <td>${escapeHtml(actualWorkType)}</td>
-            <td>${hours.toFixed(2)}</td>
-            <td>${escapeHtml(row['Issue summary'] || '')}</td>
+            <td>${hours.toFixed(1)}</td>
+            <td>${escapeHtml(row['Issue Summary'] || '')}</td>
         `;
         
         tbody.appendChild(tr);
@@ -5014,17 +5337,17 @@ function exportDataPointCSV() {
             }
         }
         
-        const actualTeam = row._overrides?.team || row.Team || personData?.team || '';
-        const actualWorkType = row._overrides?.workType || row['Work Type'] || (personData?.role ? state.roleWorkType[personData.role] : '') || '';
-        const actualProject = row._overrides?.project || row.Project || personData?.project || '';
+        const actualTeam = getActualValue(row, 'team', personData) || '';
+        const actualWorkType = getActualValue(row, 'workType', personData) || '';
+        const actualProject = getActualValue(row, 'project', personData) || '';
         const actualRole = personData?.role || '';
         
         const workDate = row['Work date'] ? row['Work date'].split(' ')[0] : '';
-        const hours = parseFloat(row.Hours) || 0;
-        const description = (row['Issue summary'] || '').replace(/"/g, '""');
+        const hours = truncateHours(parseFloat(row.Hours) || 0);
+        const description = (row['Issue Summary'] || '').replace(/"/g, '""');
         const person = (personData?.name || fullName || '').replace(/"/g, '""');
         
-        csv += `${workDate},"${person}","${actualProject}","${actualTeam}","${actualRole}","${actualWorkType}",${hours.toFixed(2)},"${description}"\n`;
+        csv += `${workDate},"${person}","${actualProject}","${actualTeam}","${actualRole}","${actualWorkType}",${hours.toFixed(1)},"${description}"\n`;
     });
     
     const blob = new Blob([csv], { type: 'text/csv' });

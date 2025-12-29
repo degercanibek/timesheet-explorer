@@ -1037,10 +1037,6 @@ View the full source code, documentation, and contribute to the project:
             <div class="mapping-options" style="padding: 12px 0; border-top: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; margin: 12px 0; display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap;">
                 <div style="display: flex; align-items: center; gap: 12px;">
                     <button id="apply-person-mapping-btn" class="btn btn-secondary" title="Apply Person Mapping to Filtered Data">Apply Mapping</button>
-                    <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 0;">
-                        <input type="checkbox" id="override-existing-mapping" class="checkbox">
-                        <span>Override existing</span>
-                    </label>
                 </div>
                 <div id="batch-update-section" style="display: flex; flex-direction: column; gap: 8px; align-items: flex-end;">
                     <div style="display: flex; align-items: center; gap: 12px;">
@@ -1463,6 +1459,54 @@ View the full source code, documentation, and contribute to the project:
             <div class="modal-footer">
                 <button id="validation-cancel" class="btn btn-secondary">Cancel Import</button>
                 <button id="validation-proceed" class="btn btn-secondary">Proceed with Valid Rows</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Apply Mapping Modal -->
+    <div id="apply-mapping-modal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2>Apply Person Mapping</h2>
+                <button class="modal-close" id="apply-mapping-modal-close">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 24px;">
+                <p style="margin-bottom: 20px; color: #666; font-size: 14px;">
+                    Apply person mappings to fill Team, Project, and Work Type fields based on the person who logged the time.
+                </p>
+                
+                <div style="margin-bottom: 24px;">
+                    <h3 style="margin: 0 0 12px 0; font-size: 14px; font-weight: 600;">Apply to Fields:</h3>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer;">
+                            <input type="checkbox" id="modal-apply-mapping-team" class="checkbox" checked>
+                            <span>Team</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer;">
+                            <input type="checkbox" id="modal-apply-mapping-project" class="checkbox" checked>
+                            <span>Project</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer;">
+                            <input type="checkbox" id="modal-apply-mapping-worktype" class="checkbox" checked>
+                            <span>Work Type</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div style="padding: 16px; background: #f9f9f9; border-radius: 8px; border: 1px solid #e0e0e0;">
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer;">
+                        <input type="checkbox" id="modal-override-existing-mapping" class="checkbox">
+                        <span style="font-weight: 500;">Override Existing Values</span>
+                    </label>
+                    <p style="margin: 8px 0 0 32px; font-size: 12px; color: #666; line-height: 1.4;">
+                        When enabled, replaces existing field values with person mapping.<br>
+                        When disabled, only fills empty fields.
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="apply-mapping-cancel-btn" class="btn btn-secondary">Cancel</button>
+                <button id="apply-mapping-execute-btn" class="btn btn-primary">Apply</button>
             </div>
         </div>
     </div>

@@ -308,14 +308,15 @@ async function loadInitialData() {
     try {
         const savedData = await loadFromIndexedDB();
         if (savedData) {
-            state.projects = savedData.projects || [];
-            state.teams = savedData.teams || [];
-            state.roles = savedData.roles || [];
-            state.workTypes = savedData.workTypes || [];
-            state.roleWorkType = savedData.roleWorkType || {};
-            state.people = savedData.people || {};
-            state.servisMapping = savedData.servisMapping || {};
-            state.timesheetData = savedData.timesheetData || [];
+            // Validate and sanitize data from IndexedDB
+            state.projects = Array.isArray(savedData.projects) ? savedData.projects.map(p => String(p)) : [];
+            state.teams = Array.isArray(savedData.teams) ? savedData.teams.map(t => String(t)) : [];
+            state.roles = Array.isArray(savedData.roles) ? savedData.roles.map(r => String(r)) : [];
+            state.workTypes = Array.isArray(savedData.workTypes) ? savedData.workTypes.map(w => String(w)) : [];
+            state.roleWorkType = (savedData.roleWorkType && typeof savedData.roleWorkType === 'object') ? savedData.roleWorkType : {};
+            state.people = (savedData.people && typeof savedData.people === 'object') ? savedData.people : {};
+            state.servisMapping = (savedData.servisMapping && typeof savedData.servisMapping === 'object') ? savedData.servisMapping : {};
+            state.timesheetData = Array.isArray(savedData.timesheetData) ? savedData.timesheetData : [];
             console.log(`Data loaded from IndexedDB: ${state.timesheetData.length} timesheet records`);
             return;
         }
@@ -328,12 +329,13 @@ async function loadInitialData() {
         const oldData = localStorage.getItem('timesheetExplorerData');
         if (oldData) {
             const parsed = JSON.parse(oldData);
-            state.projects = parsed.projects || [];
-            state.teams = parsed.teams || [];
-            state.roles = parsed.roles || [];
-            state.people = parsed.people || {};
-            state.servisMapping = parsed.servisMapping || {};
-            state.timesheetData = parsed.timesheetData || [];
+            // Validate and sanitize data from localStorage
+            state.projects = Array.isArray(parsed.projects) ? parsed.projects.map(p => String(p)) : [];
+            state.teams = Array.isArray(parsed.teams) ? parsed.teams.map(t => String(t)) : [];
+            state.roles = Array.isArray(parsed.roles) ? parsed.roles.map(r => String(r)) : [];
+            state.people = (parsed.people && typeof parsed.people === 'object') ? parsed.people : {};
+            state.servisMapping = (parsed.servisMapping && typeof parsed.servisMapping === 'object') ? parsed.servisMapping : {};
+            state.timesheetData = Array.isArray(parsed.timesheetData) ? parsed.timesheetData : [];
             console.log('Migrating data from localStorage to IndexedDB');
             await saveToIndexedDB();
             // Clear old localStorage to free space
@@ -349,10 +351,11 @@ async function loadInitialData() {
         const response = await fetch('data/project-team-role-people-data.json');
         if (response.ok) {
             const data = await response.json();
-            state.projects = data.projects || [];
-            state.teams = data.teams || [];
-            state.roles = data.roles || [];
-            state.people = data.people || {};
+            // Validate and sanitize data from JSON file
+            state.projects = Array.isArray(data.projects) ? data.projects.map(p => String(p)) : [];
+            state.teams = Array.isArray(data.teams) ? data.teams.map(t => String(t)) : [];
+            state.roles = Array.isArray(data.roles) ? data.roles.map(r => String(r)) : [];
+            state.people = (data.people && typeof data.people === 'object') ? data.people : {};
             await saveToIndexedDB();
             console.log('Data loaded from JSON file');
         }
@@ -951,8 +954,8 @@ function renderProjects() {
     for (let i = 0; i < itemsPerPage; i++) {
         if (i < paginated.length) {
             const project = paginated[i];
-            const peopleCount = Object.values(state.people).filter(p => p.project === project).length;
-            const globalIdx = start + i + 1;
+            const peopleCount = Number(Object.values(state.people).filter(p => p.project === project).length);
+            const globalIdx = Number(start + i + 1);
             rows.push(`
                 <tr>
                     <td class="row-number-col">${globalIdx}</td>
@@ -1015,8 +1018,8 @@ function renderTeams() {
     for (let i = 0; i < itemsPerPage; i++) {
         if (i < paginated.length) {
             const team = paginated[i];
-            const peopleCount = Object.values(state.people).filter(p => p.team === team).length;
-            const globalIdx = start + i + 1;
+            const peopleCount = Number(Object.values(state.people).filter(p => p.team === team).length);
+            const globalIdx = Number(start + i + 1);
             rows.push(`
                 <tr>
                     <td class="row-number-col">${globalIdx}</td>
@@ -1077,9 +1080,9 @@ function renderRoles() {
     for (let i = 0; i < itemsPerPage; i++) {
         if (i < paginated.length) {
             const role = paginated[i];
-            const peopleCount = Object.values(state.people).filter(p => p.role === role).length;
+            const peopleCount = Number(Object.values(state.people).filter(p => p.role === role).length);
             const workType = state.roleWorkType[role] || '-';
-            const globalIdx = start + i + 1;
+            const globalIdx = Number(start + i + 1);
             rows.push(`
                 <tr>
                     <td class="row-number-col">${globalIdx}</td>
@@ -1230,7 +1233,7 @@ function renderPeople() {
             const data = state.people[person];
             const totalHours = calculatePersonHours(person);
             const displayValue = convertValue(totalHours);
-            const globalIdx = start + idx + 1;
+            const globalIdx = Number(start + idx + 1);
             return `
                 <tr>
                     <td class="row-number-col">${globalIdx}</td>
@@ -3030,7 +3033,7 @@ function renderFilteredData() {
     const paginated = state.filteredData.slice(start, end);
     
     tbody.innerHTML = paginated.map((row, idx) => {
-        const actualIdx = start + idx;
+        const actualIdx = Number(start + idx);
         const fullName = row['Full name'] || '';
         // Extract person name: take text before "-", remove spaces
         const personName = fullName.split('-')[0].trim();
@@ -4601,10 +4604,24 @@ function adjustFontSize(delta) {
 // ============================================
 
 function escapeHtml(text) {
-    if (text == null) return '';
+    if (text == null || text === undefined) return '';
+    // Convert to string to handle numbers and other types safely
+    const str = String(text);
     const div = document.createElement('div');
-    div.textContent = text;
+    div.textContent = str;
     return div.innerHTML;
+}
+
+/**
+ * Sanitize HTML to prevent XSS attacks
+ * This function ensures all user input is properly escaped before rendering
+ */
+function sanitizeForHTML(value) {
+    if (value == null || value === undefined) return '';
+    // For numbers, return as-is (safe)
+    if (typeof value === 'number') return value;
+    // For strings, escape HTML
+    return escapeHtml(value);
 }
 
 // ============================================

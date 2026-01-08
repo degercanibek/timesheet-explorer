@@ -2560,8 +2560,16 @@ function applyFilters() {
             const isInList = filters.workTypes.includes(actualWorkType);
             if (filters.workTypesNot ? isInList : !isInList) return false;
         }
-        if (filters.people.length && personData) {
-            const isInList = filters.people.includes(personData.name);
+        if (filters.people.length) {
+            // Match by person name from mapping, or by checking if Full name contains the filter value
+            let isInList = false;
+            if (personData) {
+                isInList = filters.people.includes(personData.name);
+            }
+            // If not matched via personData, check if Full name contains any of the filter values
+            if (!isInList && fullName) {
+                isInList = filters.people.some(personName => fullName.includes(personName));
+            }
             if (filters.peopleNot ? isInList : !isInList) return false;
         }
         if (filters.activities.length) {
@@ -3140,6 +3148,7 @@ function showRowDetails(rowIndex) {
     const project = getActualValue(row, 'project', personData) || '-';
     
     const epic = row.Epic || row['Epic Link'] || '-';
+    const servisDisplay = getServisDisplayName(row['Servis']);
     
     const detailsHtml = `
         <div class="row-details">
@@ -3158,6 +3167,10 @@ function showRowDetails(rowIndex) {
             <div class="detail-row">
                 <strong>Activity Name:</strong>
                 <span>${escapeHtml(row['Activity Name'] || '')}</span>
+            </div>
+            <div class="detail-row">
+                <strong>Servis:</strong>
+                <span>${escapeHtml(servisDisplay)}</span>
             </div>
             <div class="detail-row">
                 <strong>Epic:</strong>
@@ -3267,6 +3280,7 @@ function showRowEdit(rowIndex) {
     
     const epic = row.Epic || row['Epic Link'] || '';
     const workDescription = row['Work Description'] || row['work description'] || '';
+    const servisDisplay = getServisDisplayName(row['Servis']);
     
     const editFormHtml = `
         <div class="row-details">
@@ -3281,6 +3295,10 @@ function showRowEdit(rowIndex) {
             <div class="detail-row">
                 <label><strong>Activity Name:</strong></label>
                 <input type="text" id="edit-activity-name" class="input" value="${escapeHtml(row['Activity Name'] || '')}" disabled>
+            </div>
+            <div class="detail-row">
+                <label><strong>Servis:</strong></label>
+                <input type="text" id="edit-servis" class="input" value="${escapeHtml(servisDisplay)}" disabled>
             </div>
             <div class="detail-row">
                 <label><strong>Epic:</strong></label>

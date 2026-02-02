@@ -2307,6 +2307,8 @@ function parseCSV(csv) {
                         row['Full name'] = value;
                     } else if (normalizedHeader === 'Issue Name') {
                         row['Issue Summary'] = value; // Map to Issue Summary only
+                    } else if (normalizedHeader === 'Description') {
+                        row['Work Description'] = value; // Map Description to Work Description
                     } else if (normalizedHeader === 'Saat') {
                         // Replace comma with dot for decimal parsing
                         row['Hours'] = value ? value.replace(',', '.') : value;
@@ -3453,7 +3455,7 @@ function exportFilteredDataCSV() {
     
     if (useNewFormat) {
         // NEW FORMAT EXPORT
-        const newFormatHeaders = ['Tarih', 'Servis Urun Adı', 'Project Key', 'Project Name', 'Ad Soyad', 'Issue Name', 'Saat', 'Team', 'Work Type', 'Project'];
+        const newFormatHeaders = ['Tarih', 'Servis Urun Adı', 'Project Key', 'Project Name', 'Ad Soyad', 'Issue Name', 'Saat', 'Description', 'Team', 'Work Type', 'Project'];
         csv = newFormatHeaders.map(h => `"${h}"`).join(';') + '\n';
         
         processedData.forEach(row => {
@@ -3476,8 +3478,9 @@ function exportFilteredDataCSV() {
                 projectKey,
                 projectName,
                 row['Full name'] || '',
-                row['Issue Name'] || '',
+                row['Issue Summary'] || '',
                 row['Hours'] || '',
+                row['Work Description'] || '',
                 row.Team || '',
                 row['Work Type'] || '',
                 row.Project || ''
